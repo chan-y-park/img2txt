@@ -80,22 +80,41 @@ class Image2Text:
 
     def _build_input_queue(self):
         minibatch_size = self._config['minibatch_size']
-        input_size = self._config['input_size']
+        input_image_shape = self.config['input_image_shape']
 
-        image_input = tf.placeholder(
+        images = tf.placeholder(
             dtype=tf.float32,
-            name='image_input',
+            shape=(minibatch_size, *input_image_shape),
+            name='images',
         )
-        caption_input = tf.placeholder(
+        captions = tf.placeholder(
             dtype=tf.int32,
-            name='caption_input',
+            shape=(minibatch_size, None),
+            name='captions',
+        )
+        targets = tf.placeholder(
+            dtype=tf.int32,
+            shape=(minibatch_size, None),
+            name='targets',
+        )
+        masks = tf.placeholder(
+            dtype=tf.int32,
+            shape=(minibatch_size, None),
+            name='masks',
         )
 
         queue_capacity = 2 * minibatch_size
 
-        queue = tf.FIFOQueue(
+#        queue = tf.FIFOQueue(
+        queue = tf.PaddingFIFOQueue(
             capacity=queue_capacity,
-            dtypes=[tf.float32, tf.int32],
+            dtypes=[tf.float32, tf.int32, tf.int32, tf.int32],
+            shapes=[
+                (minibatch_size, *input_image_shape),
+                (minibatch_size, None),
+                (minibatch_size, None),
+                (minibatch_size, None),
+            ],
             name='image_and_caption_queue',
         )
 
@@ -104,8 +123,8 @@ class Image2Text:
             name='close_op',
         )
 
-        enqueue_op = queue.enqueue(
-            (image_input, caption_input),
+        enqueue_op = queue.enqueue_many(
+            (images, captions, targets, masks),
             name='enqueue_op',
         )
 
@@ -132,24 +151,34 @@ class Image2Text:
             )
 
         if self._training:
-            images, captions = self._tf_graph.get_tensor_by_name(
+#            images, captions = self._tf_graph.get_tensor_by_name(
+#                'input_queue/dequeued_inputs:0',
+#            )
+#
+#            # TODO: Don't hard-code the max sequence length,
+#            # but use a variable one for each minibatch.
+#            max_sequence_length = self._config['max_sequence_length']
+#            minibatch_sequence_length = minibatch_size * max_sequence_length
+#
+#            images, captions, targets, masks = self._get_padded_inputs(captions)
+#
+#            assert(captions.shape.as_list()
+#                   == [minibatch_size, max_sequence_length])
+#            caption_embeddings = tf.nn.embedding_lookup(
+#                word_embedding,
+#                captions,
+#            )
+#            assert(caption_embeddings.shape.as_list()
+#                   == [minibatch_size, max_sequence_length, embedding_size])
+
+            (images, captions,
+             targets, masks) = self._tf_graph.get_tensor_by_name(
                 'input_queue/dequeued_inputs:0',
             )
-
-            # TODO: Don't hard-code the max sequence length,
-            # but use a variable one for each minibatch.
-            max_sequence_length = self._config['max_sequence_length']
-            minibatch_sequence_length = minibatch_size * max_sequence_length
-
-            captions, targets, masks = self._get_padded_inputs(captions)
-            assert(captions.shape.as_list()
-                   == [minibatch_size, max_sequence_length])
             caption_embeddings = tf.nn.embedding_lookup(
                 word_embedding,
                 captions,
             )
-            assert(caption_embeddings.shape.as_list()
-                   == [minibatch_size, max_sequence_length, embedding_size])
         else:
             images = tf.placeholder(
                 dtype=tf.float32,
@@ -178,17 +207,20 @@ class Image2Text:
 
         with tf.variable_scope('rnn') as scope:
             # TODO: Use DNC instead of LSTM.
+            cfg_rnn_cell = self._config['rnn_cell']
             lstm_kwargs = {
-                'num_units': self._config['RNN_cell']['num_units'],
-                'forget_bias': self._config['RNN_cell']['forget_bias'],
+                'num_units': cfg_rnn_cell['num_units'],
+                'forget_bias': cfg_rnn_cell['forget_bias'],
             }
             # TODO: Use LSTMBlockCell.
-            if use_lstm_block_cell:
+            if cfg_rnn_cell['type'] == 'lstm_block':
                 tf_lstm_cell = tf.contrib.rnn.LSTMBlockCell
-                lstm_kwargs['use_peephole'] = True
-            else:
+                lstm_kwargs['use_peephole'] = cfg_rnn_cell['use_peepholes']
+            elif cfg_rnn_cell['type'] == 'lstm':
                 tf_lstm_cell = tf.nn.rnn_cell.LSTMCell
-                lstm_kwargs['use_peepholes'] = True
+                lstm_kwargs['use_peepholes'] = cfg_rnn_cell['use_peepholes']
+            else:
+                raise ValueError
 
             rnn_cell = tf_lstm_cell(**lstm_kwargs)
             rnn_zero_state = rnn_cell.zero_state(
@@ -257,6 +289,16 @@ class Image2Text:
                     name='minibatch_loss'
                 )
                 tf.losses.add_loss(minibatch_loss)
+
+                # TODO: Use learning rate decay and clipping.
+                # Using contrib.layers.optimize_loss?
+                sgd = tf.train.GradientDescentOptimizer(
+                    learning_rate=self._config['sgd']['learning_rate']
+                )
+                train_op = sgd.minimize(
+                    loss=tf.losses.get_total_loss(),
+                    name='minimize_loss'
+                )
         else:
             word_probabilities = tf.nn.softmax(
                 word_log_probabilities,
@@ -399,48 +441,8 @@ class Image2Text:
 
         return tf.stack(rnn_outputs, axis=1)
 
-    def _build_rnn(
-        self,
-        image_embeddings,
-        max_sequence_length,
-        scope,
-    ):
-        minibatch_size = self._config['minibatch_size']
-
-        # TODO: Use DNC instead of LSTM.
-
-        lstm_kwargs = {
-            'num_units': self._config['RNN_cell']['num_units'],
-            'forget_bias': self._config['RNN_cell']['forget_bias'],
-        }
-        if use_lstm_block_cell:
-            tf_lstm_cell = tf.contrib.rnn.LSTMBlockCell
-            lstm_kwargs['use_peephole'] = True
-        else:
-            tf_lstm_cell = tf.nn.rnn_cell.LSTMCell
-            lstm_kwargs['use_peepholes'] = True
-
-        rnn_cell = tf_lstm_cell(**lstm_kwargs)
-        rnn_outputs = []
-
-        for t in range(max_sequence_length):
-            if t == 0:
-                rnn_state = rnn_cell.zero_state(
-                    batch_size=minibatch_size,
-                    dtype=tf.float32,
-                )
-                input_embeddings = image_embeddings
-            else:
-                scope.reuse_variables()
-                # Embed previously generated word.
-                input_embeddings = tf.nn.embedding_lookup(
-                    word_embedding,
-                    prev_words,
-                )
-
-            rnn_output, rnn_state = rnn_cell(
-                input_embeddings,
-                rnn_state,
-            )
-            rnn_outputs.append(rnn_output)
-        
+    def _get_variable_initializer(self):
+        return tf.truncated_normal_initializer(
+            dtype=tf.float32,
+            **self._config['variable_initializer']
+        )
