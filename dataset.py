@@ -1,15 +1,9 @@
 import random
 import string
+import numpy as np
 
 from PIL import Image
 
-img_path_start_string = '<td><img src="'
-img_path_end_string = '"></td>\n'
-
-caption_start_strings = ['<tbody><tr><td> ', '<tr><td> ']
-caption_end_string = '</td></tr>\n'
-
-item_end_string = '</tbody></table></td>\n'
 
 class ImageCaptionDataset:
     def __init__(
@@ -19,17 +13,30 @@ class ImageCaptionDataset:
         self._captions = {}
         self._img_ids = []
         self._data_dir = data_dir
+        self._vocabulary = None 
+        self.start_word = '<bos>'
+        self.end_word = '<eos>'
+        self.unknown_word = '<unk>'
 
     def get_captions(self, img_id):
         return self._captions[img_id]
 
-    def get_image(self, img_id=None):
+    def get_random_image(self, img_id=None):
         if img_id is None:
             img_id = random.choice(self._img_ids)
         return {
             'id': img_id,
-            'image': Image.open(self._data_dir + img_id),
+            'image': self.get_image(img_id),
         }
+
+    def get_image(self, img_id, to_array=False, size=None):
+        image = Image.open(self._data_dir + img_id)
+        if size is not None:
+            image = image.resize((size, size))
+        if to_array:
+            image = (np.array(image, dtype=np.float32)
+                     / np.iinfo(np.uint8).max)
+        return image
 
     def get_example(self, img_id=None):
         rd = self.get_image(img_id)
@@ -38,18 +45,54 @@ class ImageCaptionDataset:
             'captions': self.get_captions(rd['id']),
         }
 
-    def get_vocabulary(self):
-        vocabulary = {}
+    def tokenize(self, sentence):
+        # TODO: Use nltk.
+        words = sentence.split()
+        return (
+            [self.start_word]
+            + [word.lower().strip(',"<>') for word in words]
+            + [self.end_word]
+        )
+
+    def get_vocabulary(self, min_word_count=1):
+        word_count = {}
         for img_id, captions in self._captions.items():
             for caption in captions:
-                words = caption.split()
+                words = self.tokenize(caption)
                 for word in words:
-                    word = word.lower().strip(',"')
+#                    try:
+#                        frequency[word_id] += 1
+#                    except KeyError:
+#                        vocabulary['id_of_word'][word] = word_id
+#                        vocabulary['word_of_id'][word_id] = word
+#                        frequency[word_id] = 1
+#                        word_id += 1
                     try:
-                        vocabulary[word] += 1
+                        word_count[word] += 1
                     except KeyError:
-                        vocabulary[word] = 1
-        return vocabulary
+                        word_count[word] = 1
+
+        vocabulary = {
+            'id_of_word': {},
+            'word_of_id': {},
+        }
+        # TODO: Set word id in descending order of word count.
+        word_id = 0
+        for word, count in word_count:
+            if count >= min_word_count:
+                vocabulary['id_of_word'][word] = word_id
+                vocabulary['word_of_id'][word_id] = word
+                word_id += 1
+                        
+        return vocabulary, word_count
+
+    def get_preprocessed_caption(self, img_id, caption_id):
+        if self._vocabulary is None:
+            self._vocabulary, _ = self.get_vocabulary()
+
+        raw_caption = self.get_captions(img_id)[caption_id]
+        return [self._vocabulary['id_of_word'][word]
+                for word in self.tokenize(raw_caption)]
 
 
 class PASCAL(ImageCaptionDataset):
@@ -59,6 +102,14 @@ class PASCAL(ImageCaptionDataset):
         data_dir='./',
     ):
         super().__init__(data_dir)
+
+        img_path_start_string = '<td><img src="'
+        img_path_end_string = '"></td>\n'
+
+        caption_start_strings = ['<tbody><tr><td> ', '<tr><td> ']
+        caption_end_string = '</td></tr>\n'
+
+        item_end_string = '</tbody></table></td>\n'
 
         with open(caption_filename) as f:
             line_number = 0
@@ -90,6 +141,9 @@ class PASCAL(ImageCaptionDataset):
                                     string.whitespace + '.'
                                 )
                                 self._captions[img_path].append(caption)
+
+        # End of caption file preprocessing.
+        self._vocabulary, _ = self.get_vocabulary()
 
 
 class Flickr(ImageCaptionDataset):

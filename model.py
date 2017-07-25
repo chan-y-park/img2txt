@@ -1,9 +1,10 @@
 import os
+import random
 import numpy as np
 import tensorflow as tf
-import h5py
 
 from img2txt_datasets import PASCAL, Flickr
+from convnet import build_vgg16
 
 class Image2Text:
     def __init__(
@@ -15,12 +16,15 @@ class Image2Text:
         save_path=None,
         save_var_list=None,
     ):
-        if not os.path.exists(LOG_DIR):
-            os.makedirs(LOG_DIR)
-        if not os.path.exists(CHECKPOINT_DIR):
-            os.makedirs(CHECKPOINT_DIR)
-        if not os.path.exists(CFG_DIR):
-            os.makedirs(CFG_DIR)
+        self._config = config
+
+        for directory in (
+            self._config['log_dir'],
+            self._config['checkpoint_dir'],
+            self._config['config_dir'],
+        ):
+            if not os.path.exists(directory):
+                os.makedirs(directory)
 
         if training is None:
             raise ValueError('Set training either to be True or False.')
@@ -62,18 +66,36 @@ class Image2Text:
                 self._iter = None
 
     def _load_data(self):
+        input_image_size = self.config['input_image_shape'][0]
         cfg_dataset = self._config['dataset']
         dataset_name = cfg_dataset['name']
+        # TODO: Use a TF queue.
+        self._data_queue = []
 
         if dataset_name == 'pascal':
-            dataset = PASCAL(
-                caption_filename=cfg_dataset['caption_filename']
-                data_dir=cfg_dataset['data_dir']
+            self._dataset = PASCAL(
+                caption_filename=cfg_dataset['caption_filename'],
+                data_dir=cfg_dataset['data_dir'],
             )
+            for img_id in self._dataset._img_ids:
+                captions = self._dataset.get_captions(img_id)
+                for caption_id in range(len(captions)):
+                    image_array = self._dataset.get_image(
+                        img_id,
+                        to_array=True,
+                        size=input_image_size,
+                    )
+                    preprocessed_caption = self.get_preprocessed_caption(
+                        img_id,
+                        caption_id,
+                    )
+                    self._data_queue.append(
+                        (image_array, preprocessed_caption)
+                    )
         elif dataset_name == 'flickr_8k':
-            dataset = Flickr(
-                caption_filename=cfg_dataset['caption_filename']
-                data_dir=cfg_dataset['data_dir']
+            self._dataset = Flickr(
+                caption_filename=cfg_dataset['caption_filename'],
+                data_dir=cfg_dataset['data_dir'],
             )
         else:
             raise ValueError('Unknown dataset name: {}.'.format(dataset_name))
@@ -82,25 +104,22 @@ class Image2Text:
         minibatch_size = self._config['minibatch_size']
         input_image_shape = self.config['input_image_shape']
 
-        images = tf.placeholder(
+        image = tf.placeholder(
             dtype=tf.float32,
-            shape=(minibatch_size, *input_image_shape),
-            name='images',
+            shape=input_image_shape,
+            name='image',
         )
-        captions = tf.placeholder(
+        caption = tf.placeholder(
             dtype=tf.int32,
-            shape=(minibatch_size, None),
-            name='captions',
+            name='caption',
         )
-        targets = tf.placeholder(
+        target = tf.placeholder(
             dtype=tf.int32,
-            shape=(minibatch_size, None),
-            name='targets',
+            name='target',
         )
-        masks = tf.placeholder(
+        mask = tf.placeholder(
             dtype=tf.int32,
-            shape=(minibatch_size, None),
-            name='masks',
+            name='mask',
         )
 
         queue_capacity = 2 * minibatch_size
@@ -110,10 +129,10 @@ class Image2Text:
             capacity=queue_capacity,
             dtypes=[tf.float32, tf.int32, tf.int32, tf.int32],
             shapes=[
-                (minibatch_size, *input_image_shape),
-                (minibatch_size, None),
-                (minibatch_size, None),
-                (minibatch_size, None),
+                input_image_shape,
+                None,
+                None,
+                None,
             ],
             name='image_and_caption_queue',
         )
@@ -123,8 +142,9 @@ class Image2Text:
             name='close_op',
         )
 
-        enqueue_op = queue.enqueue_many(
-            (images, captions, targets, masks),
+#        enqueue_op = queue.enqueue_many(
+        enqueue_op = queue.enqueue(
+            (image, caption, target, mask),
             name='enqueue_op',
         )
 
@@ -146,7 +166,7 @@ class Image2Text:
         with tf.variable_scope('embedding'):
             word_embedding = tf.get_variable(
                 name='embedding',
-                shape=[vocabulrary_size, embedding_size],
+                shape=[vocabulary_size, embedding_size],
                 initializer=self._get_variable_initializer(),
             )
 
@@ -175,6 +195,10 @@ class Image2Text:
              targets, masks) = self._tf_graph.get_tensor_by_name(
                 'input_queue/dequeued_inputs:0',
             )
+            # XXX: When using PaddedFIFOQueue, all captions are padded
+            # to the same maximum sequence length.
+            max_sequence_length = captions.shape.to_list()[1]
+            minibatch_sequence_length = minibatch_size * max_sequence_length
             caption_embeddings = tf.nn.embedding_lookup(
                 word_embedding,
                 captions,
@@ -208,6 +232,8 @@ class Image2Text:
         with tf.variable_scope('rnn') as scope:
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
+            # XXX Check RNN output size.
+            rnn_output_size = cfg_rnn_cell['num_units']
             lstm_kwargs = {
                 'num_units': cfg_rnn_cell['num_units'],
                 'forget_bias': cfg_rnn_cell['forget_bias'],
@@ -245,7 +271,7 @@ class Image2Text:
                 )
                 assert(
                     rnn_outputs.shape.to_list()
-                    == [minibatche_size, max_sequence_length, rnn_output_size])
+                    == [minibatch_size, max_sequence_length, rnn_output_size]
                 )
                 rnn_outputs = tf.reshape(
                     rnn_outputs,
@@ -310,98 +336,19 @@ class Image2Text:
         pass
 
     def _build_convnet(self, input_images):
-        prev_layer = input_images
+        minibatch_size = self._config['minibatch_size']
+        embedding_size = self._config['embedding_size']
         cfg_convnet = self._config['convnet']
 
         if cfg_convnet['name'] == 'VGG16':
-            for block_name, block_conf in cfg_convnet['network']:
-                with tf.variable_scope(block_name):
-                    for layer_name, layer_conf in block_conf:
-                        with tf.variable_scope(layer_name):
-                            block_layer_name = block_name + '_' + layer_name
-                            if 'conv' in layer_name:
-                                conv_var = {}
-                                for var_name, var_shape in layer_conf.items():
-                                    conv_var[var_name] = self._get_weights(
-                                        block_layer_name,
-                                        var_name,
-                                        var_shape,
-                                    )
-                                tensor = tf.nn.conv2d(
-                                    prev_layer,
-                                    conv_var['W'],
-                                    strides=[1, 1, 1, 1],
-                                    padding='SAME',
-                                )
-                                tensor = tf.nn.bias_add(
-                                    tensor,
-                                    conv_var['b']
-                                )
-                                new_layer = tf.nn.relu(
-                                    tensor,
-                                )
-                            elif 'pool' in layer_name:
-                                rv = tf.nn.max_pool(
-                                    prev_layer,
-                                    ksize=([1] + layer_conf['k'] + [1]),
-                                    strides=([1] + layer_conf['s'] + [1]),
-                                    padding='SAME',
-                                )
-                                if self.visualize:
-                                    new_layer, switches = rv
-                                    self._max_pool_switches[
-                                        block_layer_name
-                                    ] = switches
-                                else:
-                                    new_layer = rv
+            convnet_top_layer = build_vgg16(
+                input_images,
+                minibatch_size,
+            )
+        else:
+            raise NotImplementedError
 
-                            elif 'flatten' in layer_name:
-                                new_layer = tf.reshape(
-                                    prev_layer,
-                                    [self.batch_size, -1],
-                                )
-
-                            elif (
-                                'fc' in layer_name
-                                or 'predictions' in layer_name
-                            ):
-                                if 'fc' in layer_name:
-                                    f_layer = tf.nn.relu    
-                                elif 'predictions' in layer_name:
-                                    f_layer = tf.nn.softmax
-
-                                input_dim = prev_layer.shape[-1].value
-                                output_dim = layer_conf
-                                layer_var = {}
-                                for var_name, var_shape in (
-                                    ('W', (input_dim, output_dim)),
-                                    ('b', (output_dim)),
-                                ):
-                                    layer_var[var_name] = self._get_weights(
-                                        layer_name,
-                                        var_name,
-                                        var_shape,
-                                    )
-                                activation = tf.add(
-                                    tf.matmul(prev_layer, layer_var['W']),
-                                    layer_var['b'],
-                                    name='activation',
-                                )
-                                new_layer = f_layer(
-                                    activation,
-                                )
-                            
-                            else:
-                                raise NotImplementedError
-
-                            # End of building a layer.
-
-                            self._forward_layers[block_layer_name] = new_layer
-                            prev_layer = new_layer
-
-        # End of building a convnet.
-
-        minibatch_size, convnet_output_size = prev_layer.shape.to_list()
+        _, convnet_output_size = convnet_top_layer.shape.to_list()
         with tf.variable_scope('image_embedding'):
             W = tf.get_variable(
                 name='W',
@@ -413,13 +360,13 @@ class Image2Text:
                 shape=(embedding_size),
                 initializer=self._get_variable_initializer(),
             )
-            image_embeddings = tf.matmul(rnn_outputs, W) + b
+            image_embeddings = tf.matmul(convnet_top_layer, W) + b
 
         return image_embeddings
 
     def _build_unrolled_rnn(
         self,
-        cell,
+        rnn_cell,
         inputs,
         initial_state,
         max_sequence_length,
@@ -432,6 +379,7 @@ class Image2Text:
             axis=1,
         )
 
+        rnn_state = initial_state
         for t in range(max_sequence_length):
             rnn_output, rnn_state = rnn_cell(
                 input_splits[t],
@@ -446,3 +394,53 @@ class Image2Text:
             dtype=tf.float32,
             **self._config['variable_initializer']
         )
+
+    def _enqueue_thread(self):
+        minibatch_size = self._config['minibatch_size']
+
+        num_data = len(self._data_queue)
+        i = 0
+
+        enqueue_op = self._tf_graph.get_operation_by_name(
+            'input_queue/enqueue_op'
+        )
+        input_queue_image = self._tf_graph.get_tensor_by_name(
+            'input_queue/image:0'
+        )
+        input_queue_caption = self._tf_graph.get_tensor_by_name(
+            'input_queue/caption:0'
+        )
+        input_queue_target = self._tf_graph.get_tensor_by_name(
+            'input_queue/target:0'
+        )
+        input_queue_mask = self._tf_graph.get_tensor_by_name(
+            'input_queue/mask:0'
+        )
+
+        random.shuffle(self._data_queue)
+
+        while not self._tf_coordinator.should_stop():
+            if i >= num_data:
+                i %= num_data
+                random.shuffle(self._data_queue)
+            data_to_enqueue = self._data_queue[i] 
+            i += 1
+            try:
+                image, caption = data_to_enqueue
+                input_sequence_length = len(caption) - 1
+                mask = np.ones(input_sequence_length)
+                self._tf_session.run(
+                    enqueue_op,
+                    feed_dict={
+                        input_queue_image: image,
+                        input_queue_caption: caption[:-1],
+                        input_queue_target: caption[1:],
+                        input_queue_mask: mask,
+                    }
+                )
+            except tf.errors.CancelledError:
+#                print('Input queue closed.')
+                pass
+
+def get_step_from_checkpoint(save_path):
+    return int(save_path.split('-')[-1])
