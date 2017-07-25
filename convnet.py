@@ -97,5 +97,6 @@ def get_vgg16_weights(weights_f, block_layer_name, var_name, var_shape):
             [block_layer_name]
             [dset_name]     
             .value 
-        )
+        ),
+        trainable=False,
     )

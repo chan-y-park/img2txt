@@ -28,6 +28,9 @@ img2txt_using_lstm = {
         'num_epochs_per_decay': 8.0,
         'clip_gradients': 5.0,
     },
-    'convnet': 'vgg16',
+    'convnet': {
+        'name': 'vgg16',
+        'train_dataset': 'imagenet',
+    },
     'num_training_iterations': 100,
 }

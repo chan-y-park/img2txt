@@ -9,6 +9,12 @@ import tensorflow as tf
 from dataset import PASCAL, Flickr
 from convnet import build_vgg16
 
+# TODO:
+# check inference.
+# implement file name queue.
+# check input queue consumption and add more enqueue threads.
+
+
 class Image2Text:
     def __init__(
         self,
@@ -17,7 +23,6 @@ class Image2Text:
         gpu_memory_fraction=None,
         gpu_memory_allow_growth=True,
         save_path=None,
-        save_var_list=None,
     ):
         self._config = config
 
@@ -61,7 +66,13 @@ class Image2Text:
             self._tf_session = tf.Session(config=self._tf_config)
             self._tf_session.run(tf.global_variables_initializer())
 
-            self._tf_saver = tf.train.Saver()
+            # List of variables to save and restore using tf.train.Saver.
+            self._saver_var_list = self._tf_graph.get_collection(
+                'trainable_variables'
+            )
+            self._tf_saver = tf.train.Saver(
+                var_list=self._saver_var_list,
+            )
             if save_path is not None:
                 self._tf_saver.restore(self._tf_session, save_path)
                 self._iter = get_step_from_checkpoint(save_path)
@@ -88,29 +99,6 @@ class Image2Text:
         else:
             raise ValueError('Unknown dataset name: {}.'.format(dataset_name))
 
-#        num_processed = 0
-#        total_num_to_process = len(dataset._img_ids)
-#        for img_id in dataset._img_ids:
-#            num_processed += 1
-#            print(
-#                '{}/{} of dataset {} processed.'
-#                .format(num_processed, total_num_to_process, dataset_name),
-#                end='\r',
-#            )
-#            captions = dataset.get_captions(img_id)
-#            for caption_id in range(len(captions)):
-#                image_array = dataset.get_image(
-#                    img_id,
-#                    to_array=True,
-#                    size=input_image_size,
-#                )
-#                preprocessed_caption = dataset.get_preprocessed_caption(
-#                    img_id,
-#                    caption_id,
-#                )
-#                self._data_queue.append(
-#                    (image_array, preprocessed_caption)
-#                )
         self._config['vocabulary_size'] = dataset.get_vocabulary_size()
         for img_id in dataset._img_ids:
             captions = dataset.get_captions(img_id)
@@ -144,7 +132,6 @@ class Image2Text:
 
         queue_capacity = 2 * minibatch_size
 
-#        queue = tf.FIFOQueue(
         queue = tf.PaddingFIFOQueue(
             capacity=queue_capacity,
             dtypes=[tf.float32, tf.int32, tf.int32, tf.int32],
@@ -162,7 +149,6 @@ class Image2Text:
             name='close_op',
         )
 
-#        enqueue_op = queue.enqueue_many(
         enqueue_op = queue.enqueue(
             (image, caption, target, mask),
             name='enqueue_op',
@@ -183,12 +169,12 @@ class Image2Text:
         vocabulary_size = self._config['vocabulary_size']
         embedding_size = self._config['embedding_size']
 
-        with tf.variable_scope('embedding'):
-            word_embedding = tf.get_variable(
-                name='embedding',
-                shape=[vocabulary_size, embedding_size],
-                initializer=self._get_variable_initializer(),
-            )
+        word_embedding = tf.get_variable(
+            name='word_embedding',
+            shape=[vocabulary_size, embedding_size],
+            initializer=self._get_variable_initializer(),
+        )
+
         # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
         # inference runs for a single RNN cell pass.
         if self._training:
@@ -346,15 +332,20 @@ class Image2Text:
     def _build_convnet(self, input_images):
         minibatch_size = self._config['minibatch_size']
         embedding_size = self._config['embedding_size']
-        convnet = self._config['convnet']
+        convnet_name = self._config['convnet']['name']
 
-        if convnet == 'vgg16':
+        if convnet_name == 'vgg16':
             convnet_top_layer = build_vgg16(
                 input_images,
                 minibatch_size,
             )
         else:
             raise NotImplementedError
+
+        tf.identity(
+            convnet_top_layer,
+            name='predictions',
+        )
 
         _, convnet_output_size = convnet_top_layer.shape.as_list()
         with tf.variable_scope('image_embedding'):
@@ -375,31 +366,6 @@ class Image2Text:
             )
 
         return image_embeddings
-
-    def _build_unrolled_rnn(
-        self,
-        rnn_cell,
-        inputs,
-        initial_state,
-        max_sequence_length,
-        scope,
-    ):
-        rnn_outputs = []
-        input_splits = tf.split(
-            inputs,
-            max_sequence_length,
-            axis=1,
-        )
-
-        rnn_state = initial_state
-        for t in range(max_sequence_length):
-            rnn_output, rnn_state = rnn_cell(
-                input_splits[t],
-                rnn_state,
-            )
-            rnn_outputs.append(rnn_output)
-
-        return tf.stack(rnn_outputs, axis=1)
 
     def _get_variable_initializer(self):
         return tf.truncated_normal_initializer(
@@ -440,7 +406,6 @@ class Image2Text:
             data_to_enqueue = self._data_queue[i] 
             i += 1
             try:
-#                image, caption = data_to_enqueue
                 img_id, caption_id = data_to_enqueue
                 image = dataset.get_image(
                     img_id,
@@ -463,11 +428,27 @@ class Image2Text:
                     }
                 )
             except tf.errors.CancelledError:
-#                print('Input queue closed.')
-                pass
+                print('Input queue closed.')
 
     def _build_summary_ops(self):
-        pass
+        summaries = [
+            tf.summary.scalar(
+                name='minibatch_loss',
+                tensor=self._tf_graph.get_tensor_by_name(
+                    'train/minibatch_loss:0'
+                )
+            ),
+            tf.summary.scalar(
+                name='queue_size',
+                tensor=self._tf_graph.get_tensor_by_name(
+                    'input_queue/size:0'
+                ),
+            )
+        ]
+        summary_op = tf.summary.merge(
+            summaries,
+            name='merged',
+        )
 
     def train(
         self,
@@ -507,9 +488,11 @@ class Image2Text:
         for var_name in [
             'train/minibatch_loss',
             'convnet/image_embedding/image_embeddings',
+            'convnet/predictions',
             'rnn/dynamic_rnn_outputs',
             'rnn/reshaped_rnn_output',
             'rnn/fc/word_log_probabilities',
+            'summary/merged/merged',
         ]:
             fetches[var_name] = self._tf_graph.get_tensor_by_name(
                 var_name + ':0'
@@ -536,10 +519,10 @@ class Image2Text:
                     fetches=fetches,
                 )
 
-#                summary_writer.add_summary(
-#                    summary=rd['summary/merged/merged'],
-#                    global_step=i,
-#                )
+                summary_writer.add_summary(
+                    summary=rd['summary/merged/merged'],
+                    global_step=i,
+                )
 
                 if i % display_iterations == 0:
                     print(
@@ -575,12 +558,23 @@ class Image2Text:
 
         self._tf_coordinator.join(queue_threads)
 
-        with open('{}/{}'.format(CFG_DIR, run_name), 'w') as fp:
+        with open('{}/{}'.format(self.config['cfg_dir'], run_name), 'w') as fp:
             json.dump(self._config, fp)
 
         summary_writer.close()
 
         return rd
 
+    def decode_convnet_predictions(self, predictions):
+        convnet_train_dataset = self._config['convnet']['train_dataset']
+        if convnet_train_dataset == 'imagenet':
+            from keras.applications.imagenet_utils import decode_predictions
+        else:
+            raise NotImplementedError
+        
+        return decode_predictions(pred)
+
 def get_step_from_checkpoint(save_path):
     return int(save_path.split('-')[-1])
+
+
