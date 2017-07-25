@@ -78,7 +78,7 @@ class ImageCaptionDataset:
         }
         # TODO: Set word id in descending order of word count.
         word_id = 0
-        for word, count in word_count:
+        for word, count in word_count.items():
             if count >= min_word_count:
                 vocabulary['id_of_word'][word] = word_id
                 vocabulary['word_of_id'][word_id] = word
@@ -111,7 +111,7 @@ class PASCAL(ImageCaptionDataset):
 
         item_end_string = '</tbody></table></td>\n'
 
-        with open(caption_filename) as f:
+        with open(data_dir + caption_filename) as f:
             line_number = 0
             for line in f:
                 line_number += 1

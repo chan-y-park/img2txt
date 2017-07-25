@@ -1,9 +1,12 @@
 import os
 import random
+import time
+import threading
+
 import numpy as np
 import tensorflow as tf
 
-from img2txt_datasets import PASCAL, Flickr
+from dataset import PASCAL, Flickr
 from convnet import build_vgg16
 
 class Image2Text:
@@ -66,43 +69,62 @@ class Image2Text:
                 self._iter = None
 
     def _load_data(self):
-        input_image_size = self.config['input_image_shape'][0]
+        input_image_size = self._config['input_image_shape'][0]
         cfg_dataset = self._config['dataset']
         dataset_name = cfg_dataset['name']
         # TODO: Use a TF queue.
         self._data_queue = []
 
         if dataset_name == 'pascal':
-            self._dataset = PASCAL(
+            dataset = PASCAL(
                 caption_filename=cfg_dataset['caption_filename'],
                 data_dir=cfg_dataset['data_dir'],
             )
-            for img_id in self._dataset._img_ids:
-                captions = self._dataset.get_captions(img_id)
-                for caption_id in range(len(captions)):
-                    image_array = self._dataset.get_image(
-                        img_id,
-                        to_array=True,
-                        size=input_image_size,
-                    )
-                    preprocessed_caption = self.get_preprocessed_caption(
-                        img_id,
-                        caption_id,
-                    )
-                    self._data_queue.append(
-                        (image_array, preprocessed_caption)
-                    )
         elif dataset_name == 'flickr_8k':
-            self._dataset = Flickr(
+            dataset = Flickr(
                 caption_filename=cfg_dataset['caption_filename'],
                 data_dir=cfg_dataset['data_dir'],
             )
         else:
             raise ValueError('Unknown dataset name: {}.'.format(dataset_name))
 
+#        num_processed = 0
+#        total_num_to_process = len(dataset._img_ids)
+#        for img_id in dataset._img_ids:
+#            num_processed += 1
+#            print(
+#                '{}/{} of dataset {} processed.'
+#                .format(num_processed, total_num_to_process, dataset_name),
+#                end='\r',
+#            )
+#            captions = dataset.get_captions(img_id)
+#            for caption_id in range(len(captions)):
+#                image_array = dataset.get_image(
+#                    img_id,
+#                    to_array=True,
+#                    size=input_image_size,
+#                )
+#                preprocessed_caption = dataset.get_preprocessed_caption(
+#                    img_id,
+#                    caption_id,
+#                )
+#                self._data_queue.append(
+#                    (image_array, preprocessed_caption)
+#                )
+        num_processed = 0
+        total_num_to_process = len(dataset._img_ids)
+        for img_id in dataset._img_ids:
+            captions = dataset.get_captions(img_id)
+            for caption_id in range(len(captions)):
+
+                self._data_queue.append(
+                    (img_id, caption_id)
+                )
+        self._dataset = dataset
+
     def _build_input_queue(self):
         minibatch_size = self._config['minibatch_size']
-        input_image_shape = self.config['input_image_shape']
+        input_image_shape = self._config['input_image_shape']
 
         image = tf.placeholder(
             dtype=tf.float32,
@@ -130,9 +152,9 @@ class Image2Text:
             dtypes=[tf.float32, tf.int32, tf.int32, tf.int32],
             shapes=[
                 input_image_shape,
-                None,
-                None,
-                None,
+                [None],
+                [None],
+                [None],
             ],
             name='image_and_caption_queue',
         )
@@ -159,7 +181,7 @@ class Image2Text:
 
     def _build_network(self):
         minibatch_size = self._config['minibatch_size']
-        input_image_shape = self.config['input_image_shape']
+        input_image_shape = self._config['input_image_shape']
         vocabulary_size = self._config['vocabulary_size']
         embedding_size = self._config['embedding_size']
 
@@ -169,40 +191,32 @@ class Image2Text:
                 shape=[vocabulary_size, embedding_size],
                 initializer=self._get_variable_initializer(),
             )
-
+        # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
+        # inference runs for a single RNN cell pass.
         if self._training:
-#            images, captions = self._tf_graph.get_tensor_by_name(
-#                'input_queue/dequeued_inputs:0',
-#            )
-#
-#            # TODO: Don't hard-code the max sequence length,
-#            # but use a variable one for each minibatch.
-#            max_sequence_length = self._config['max_sequence_length']
-#            minibatch_sequence_length = minibatch_size * max_sequence_length
-#
-#            images, captions, targets, masks = self._get_padded_inputs(captions)
-#
-#            assert(captions.shape.as_list()
-#                   == [minibatch_size, max_sequence_length])
-#            caption_embeddings = tf.nn.embedding_lookup(
-#                word_embedding,
-#                captions,
-#            )
-#            assert(caption_embeddings.shape.as_list()
-#                   == [minibatch_size, max_sequence_length, embedding_size])
-
-            (images, captions,
-             targets, masks) = self._tf_graph.get_tensor_by_name(
-                'input_queue/dequeued_inputs:0',
-            )
             # XXX: When using PaddedFIFOQueue, all captions are padded
             # to the same maximum sequence length.
-            max_sequence_length = captions.shape.to_list()[1]
-            minibatch_sequence_length = minibatch_size * max_sequence_length
+            images, captions, targets, masks = [
+                self._tf_graph.get_tensor_by_name(
+                    'input_queue/dequeued_inputs:{}'.format(i),
+                ) for i in range(4)
+            ]
+            # TODO: Don't hard-code the max sequence length,
+            # but use a variable one for each minibatch.
+#            max_sequence_length = self._config['max_sequence_length']
+#            minibatch_sequence_length = minibatch_size * max_sequence_length
+
+#            max_sequence_length = captions.shape.as_list()[1]
+
+#            assert(captions.shape.as_list()
+#                   == [minibatch_size, max_sequence_length])
+
             caption_embeddings = tf.nn.embedding_lookup(
                 word_embedding,
                 captions,
             )
+#            assert(caption_embeddings.shape.as_list()
+#                   == [minibatch_size, max_sequence_length, embedding_size])
         else:
             images = tf.placeholder(
                 dtype=tf.float32,
@@ -229,7 +243,7 @@ class Image2Text:
                 images,
             )
 
-        with tf.variable_scope('rnn') as scope:
+        with tf.variable_scope('rnn'):
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
             # XXX Check RNN output size.
@@ -248,44 +262,37 @@ class Image2Text:
             else:
                 raise ValueError
 
-            rnn_cell = tf_lstm_cell(**lstm_kwargs)
-            rnn_zero_state = rnn_cell.zero_state(
-                batch_size=minibatch_size,
-                dtype=tf.float32,
-            )
-            _, rnn_initial_state = rnn_cell(
-                image_embeddings,
-                rnn_zero_state,
-            )
+            with tf.variable_scope('lstm_cell') as scope:
+                rnn_cell = tf_lstm_cell(**lstm_kwargs)
+                rnn_zero_state = rnn_cell.zero_state(
+                    batch_size=minibatch_size,
+                    dtype=tf.float32,
+                )
+                _, rnn_initial_state = rnn_cell(
+                    image_embeddings,
+                    rnn_zero_state,
+                )
 
-            scope.reuse_variables()
+                scope.reuse_variables()
 
-            if self._training:
-                # TODO: Use dynamic_rnn.
-                rnn_outputs = self._build_unrolled_rnn(
-                    rnn_cell,
-                    caption_embeddings,
-                    rnn_initial_state,
-                    max_sequence_length,
-                    scope,
-                )
-                assert(
-                    rnn_outputs.shape.to_list()
-                    == [minibatch_size, max_sequence_length, rnn_output_size]
-                )
-                rnn_outputs = tf.reshape(
-                    rnn_outputs,
-                    (minibatch_sequence_length, rnn_output_size),
-                )
-                masks = tf.reshape(
-                    masks,
-                    (minibatch_sequence_length), 
-                )
-            else:
-                rnn_output, rnn_state = rnn_cell(
-                    input_embedding,
-                    rnn_state,
-                )
+                if self._training:
+                    rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
+                        cell=rnn_cell,
+                        inputs=caption_embeddings,
+                        sequence_length = tf.reduce_sum(masks, axis=1),
+                        initial_state=rnn_initial_state,
+                        dtype=tf.float32,
+                        scope=scope,
+                    )
+                    rnn_outputs = tf.reshape(
+                        rnn_outputs,
+                        [-1, rnn_output_size],
+                    )
+                else:
+                    rnn_output, rnn_state = rnn_cell(
+                        input_embedding,
+                        rnn_state,
+                    )
 
             with tf.variable_scope('fc'):
                 W = tf.get_variable(
@@ -299,16 +306,23 @@ class Image2Text:
                     initializer=self._get_variable_initializer(),
                 )
                 word_log_probabilities = tf.matmul(rnn_outputs, W) + b
-                word_logits, words = tf.nn.top_k(word_log_probabilities, k=1)
+                word_logits, words = tf.nn.top_k(
+                    word_log_probabilities,
+                    k=1,
+                    name='predictions',
+                )
 
-        if self.training:
+        if self._training:
             with tf.variable_scope('train'):
                 loss_function = tf.nn.sparse_softmax_cross_entropy_with_logits
+                targets = tf.reshape(targets, [-1])
                 unmasked_losses = loss_function(
                     labels=targets,
-                    logits=word_logits,
+                    logits=word_log_probabilities,
                     name='unmasked_losses',
                 )
+
+                masks = tf.to_float(tf.reshape(masks, [-1]))
                 minibatch_loss = tf.div(
                     tf.reduce_sum(tf.multiply(unmasked_losses, masks)),
                     tf.reduce_sum(masks),
@@ -319,7 +333,7 @@ class Image2Text:
                 # TODO: Use learning rate decay and clipping.
                 # Using contrib.layers.optimize_loss?
                 sgd = tf.train.GradientDescentOptimizer(
-                    learning_rate=self._config['sgd']['learning_rate']
+                    learning_rate=self._config['sgd']['initial_learning_rate']
                 )
                 train_op = sgd.minimize(
                     loss=tf.losses.get_total_loss(),
@@ -338,9 +352,9 @@ class Image2Text:
     def _build_convnet(self, input_images):
         minibatch_size = self._config['minibatch_size']
         embedding_size = self._config['embedding_size']
-        cfg_convnet = self._config['convnet']
+        convnet = self._config['convnet']
 
-        if cfg_convnet['name'] == 'VGG16':
+        if convnet == 'vgg16':
             convnet_top_layer = build_vgg16(
                 input_images,
                 minibatch_size,
@@ -348,7 +362,7 @@ class Image2Text:
         else:
             raise NotImplementedError
 
-        _, convnet_output_size = convnet_top_layer.shape.to_list()
+        _, convnet_output_size = convnet_top_layer.shape.as_list()
         with tf.variable_scope('image_embedding'):
             W = tf.get_variable(
                 name='W',
@@ -397,6 +411,8 @@ class Image2Text:
 
     def _enqueue_thread(self):
         minibatch_size = self._config['minibatch_size']
+        input_image_size = self._config['input_image_shape'][0]
+        dataset = self._dataset
 
         num_data = len(self._data_queue)
         i = 0
@@ -426,7 +442,17 @@ class Image2Text:
             data_to_enqueue = self._data_queue[i] 
             i += 1
             try:
-                image, caption = data_to_enqueue
+#                image, caption = data_to_enqueue
+                img_id, caption_id = data_to_enqueue
+                image = dataset.get_image(
+                    img_id,
+                    to_array=True,
+                    size=input_image_size,
+                )
+                caption = dataset.get_preprocessed_caption(
+                    img_id,
+                    caption_id,
+                )
                 input_sequence_length = len(caption) - 1
                 mask = np.ones(input_sequence_length)
                 self._tf_session.run(
@@ -441,6 +467,112 @@ class Image2Text:
             except tf.errors.CancelledError:
 #                print('Input queue closed.')
                 pass
+
+    def _build_summary_ops(self):
+        pass
+
+    def train(
+        self,
+        run_name=None,
+        max_num_iters=None,
+        additional_num_iters=None,
+    ):
+        if not self._training:
+            raise RuntimeError
+
+        if run_name is None:
+            run_name = (
+                '{:02}{:02}_{:02}{:02}{:02}'.format(*time.localtime()[1:6])
+            )
+
+        summary_writer = tf.summary.FileWriter(
+            logdir='{}/{}'.format(self._config['log_dir'], run_name),
+            graph=self._tf_graph,
+        )
+
+        if self._iter is None:
+            self._iter = 1
+        if max_num_iters is not None:
+            self._config['num_training_iterations'] = max_num_iters
+        if additional_num_iters is not None:
+           self._config['num_training_iterations'] += additional_num_iters
+
+        num_training_iterations = self._config['num_training_iterations']
+        display_iterations = num_training_iterations // 100
+        save_iterations = num_training_iterations // 10
+
+        queue_threads = [threading.Thread(target=self._enqueue_thread)]
+        for t in queue_threads:
+            t.start()
+#        self._enqueue_thread()
+
+        fetches = {}
+        for var_name in [
+            'train/minibatch_loss',
+        ]:
+            fetches[var_name] = self._tf_graph.get_tensor_by_name(
+                var_name + ':0'
+            )
+
+        for op_name in [
+            'train/minimize_loss',
+        ]:
+            fetches[op_name] = self._tf_graph.get_operation_by_name(op_name)
+
+        try:
+            for i in range(self._iter, num_training_iterations + 1):
+                if self._tf_coordinator.should_stop():
+                    break
+
+                rd = self._tf_session.run(
+                    fetches=fetches,
+                )
+
+#                summary_writer.add_summary(
+#                    summary=rd['summary/merged/merged'],
+#                    global_step=i,
+#                )
+
+                if i % display_iterations == 0:
+                    print(
+                        '{:g}% : L_x = {:g}'
+                        .format(
+                            (i / num_training_iterations * 100),
+                            rd['train/minibatch_loss'],
+                        ),
+                    )
+                if (
+                    i % save_iterations == 0
+                    or i == num_training_iterations
+                ):
+                    save_path = self._tf_saver.save(
+                        self._tf_session,
+                        'checkpoints/{}'.format(run_name),
+                        i,
+                    )
+                    print('checkpoint saved at {}'.format(save_path))
+
+            # End of iteration for-loop.
+
+        except tf.errors.OutOfRangeError:
+            raise RuntimeError
+
+        finally:
+            self._tf_coordinator.request_stop()
+            self._tf_session.run(
+                self._tf_graph.get_operation_by_name(
+                    'input_queue/close_op'
+                )
+            )
+
+        self._tf_coordinator.join(queue_threads)
+
+        with open('{}/{}'.format(CFG_DIR, run_name), 'w') as fp:
+            json.dump(self._config, fp)
+
+        summary_writer.close()
+
+        return rd
 
 def get_step_from_checkpoint(save_path):
     return int(save_path.split('-')[-1])

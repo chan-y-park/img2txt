@@ -1,10 +1,11 @@
 from convnet_config import vgg16
+from dataset_config import pascal
 
-img2txt_using_lstm ={
-    'log_dir': 'logs'
+img2txt_using_lstm = {
+    'log_dir': 'logs',
     'checkpoint_dir': 'checkpoints',
     'config_dir': 'configs',
-    'dataset': 'pascal',
+    'dataset': pascal,
     'minibatch_size': 3,
     'input_image_shape': [224, 224, 3],
     'vocabulary_size': 100,
@@ -28,4 +29,5 @@ img2txt_using_lstm ={
         'clip_gradients': 5.0,
     },
     'convnet': 'vgg16',
+    'num_training_iterations': 100,
 }

@@ -1,6 +1,6 @@
 vgg16 = {
     'weights_file_path': (
-        'pretrained/vgg16_weights_tf_dim_ordering_tf_kernels.h5'
+        'pretrained/vgg16_weights.h5'
     ),
     'network': [
         ('block1',
