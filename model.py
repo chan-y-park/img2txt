@@ -111,12 +111,10 @@ class Image2Text:
 #                self._data_queue.append(
 #                    (image_array, preprocessed_caption)
 #                )
-        num_processed = 0
-        total_num_to_process = len(dataset._img_ids)
+        self._config['vocabulary_size'] = dataset.get_vocabulary_size()
         for img_id in dataset._img_ids:
             captions = dataset.get_captions(img_id)
             for caption_id in range(len(captions)):
-
                 self._data_queue.append(
                     (img_id, caption_id)
                 )
@@ -201,22 +199,11 @@ class Image2Text:
                     'input_queue/dequeued_inputs:{}'.format(i),
                 ) for i in range(4)
             ]
-            # TODO: Don't hard-code the max sequence length,
-            # but use a variable one for each minibatch.
-#            max_sequence_length = self._config['max_sequence_length']
-#            minibatch_sequence_length = minibatch_size * max_sequence_length
-
-#            max_sequence_length = captions.shape.as_list()[1]
-
-#            assert(captions.shape.as_list()
-#                   == [minibatch_size, max_sequence_length])
 
             caption_embeddings = tf.nn.embedding_lookup(
                 word_embedding,
                 captions,
             )
-#            assert(caption_embeddings.shape.as_list()
-#                   == [minibatch_size, max_sequence_length, embedding_size])
         else:
             images = tf.placeholder(
                 dtype=tf.float32,
@@ -284,15 +271,22 @@ class Image2Text:
                         dtype=tf.float32,
                         scope=scope,
                     )
-                    rnn_outputs = tf.reshape(
-                        rnn_outputs,
-                        [-1, rnn_output_size],
-                    )
                 else:
                     rnn_output, rnn_state = rnn_cell(
                         input_embedding,
                         rnn_state,
                     )
+
+            if self._training:
+                tf.identity(
+                    rnn_outputs,
+                    name='dynamic_rnn_outputs',
+                )
+                rnn_output = tf.reshape(
+                    rnn_outputs,
+                    [-1, rnn_output_size],
+                    name='reshaped_rnn_output',
+                )
 
             with tf.variable_scope('fc'):
                 W = tf.get_variable(
@@ -305,7 +299,11 @@ class Image2Text:
                     shape=(vocabulary_size),
                     initializer=self._get_variable_initializer(),
                 )
-                word_log_probabilities = tf.matmul(rnn_outputs, W) + b
+                word_log_probabilities = tf.add(
+                    tf.matmul(rnn_output, W),
+                    b,
+                    name='word_log_probabilities',
+                )
                 word_logits, words = tf.nn.top_k(
                     word_log_probabilities,
                     k=1,
@@ -344,10 +342,6 @@ class Image2Text:
                 word_log_probabilities,
                 name='word_probabilities',
             )
-            
-
-    def _get_padded_inputs(self, captions):
-        pass
 
     def _build_convnet(self, input_images):
         minibatch_size = self._config['minibatch_size']
@@ -374,7 +368,11 @@ class Image2Text:
                 shape=(embedding_size),
                 initializer=self._get_variable_initializer(),
             )
-            image_embeddings = tf.matmul(convnet_top_layer, W) + b
+            image_embeddings = tf.add(
+                tf.matmul(convnet_top_layer, W),
+                b,
+                name='image_embeddings',
+            )
 
         return image_embeddings
 
@@ -504,14 +502,24 @@ class Image2Text:
         queue_threads = [threading.Thread(target=self._enqueue_thread)]
         for t in queue_threads:
             t.start()
-#        self._enqueue_thread()
 
         fetches = {}
         for var_name in [
             'train/minibatch_loss',
+            'convnet/image_embedding/image_embeddings',
+            'rnn/dynamic_rnn_outputs',
+            'rnn/reshaped_rnn_output',
+            'rnn/fc/word_log_probabilities',
         ]:
             fetches[var_name] = self._tf_graph.get_tensor_by_name(
                 var_name + ':0'
+            )
+
+        for i, var_name in enumerate(
+            ['images', 'captions', 'targets', 'masks']
+        ):
+            fetches[var_name] = self._tf_graph.get_tensor_by_name(
+                'input_queue/dequeued_inputs:{}'.format(i),
             )
 
         for op_name in [

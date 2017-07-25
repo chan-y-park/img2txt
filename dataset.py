@@ -86,6 +86,11 @@ class ImageCaptionDataset:
                         
         return vocabulary, word_count
 
+    def get_vocabulary_size(self):
+        if self._vocabulary is None:
+            self._vocabulary, _ = self.get_vocabulary()
+        return len(self._vocabulary['id_of_word'])
+
     def get_preprocessed_caption(self, img_id, caption_id):
         if self._vocabulary is None:
             self._vocabulary, _ = self.get_vocabulary()
@@ -93,6 +98,12 @@ class ImageCaptionDataset:
         raw_caption = self.get_captions(img_id)[caption_id]
         return [self._vocabulary['id_of_word'][word]
                 for word in self.tokenize(raw_caption)]
+
+    def get_sentence_from_word_ids(self, word_ids):
+        words = [self._vocabulary['word_of_id'][word_id]
+                 for word_id in word_ids]
+        sentence = ' '.join(words)
+        return sentence
 
 
 class PASCAL(ImageCaptionDataset):
