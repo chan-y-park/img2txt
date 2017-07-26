@@ -20,6 +20,10 @@ from convnet import build_vgg16
 # XXX: To transfer learning between different datasets, 
 # need to have a single vocabulary for all datasets.
 
+LOG_DIR = 'logs'
+CHECKPOINT_DIR = 'checkpoints'
+CONFIG_DIR = 'configs'
+
 
 class Image2Text:
     def __init__(
@@ -31,13 +35,21 @@ class Image2Text:
         gpu_memory_allow_growth=True,
         save_path=None,
     ):
+        if save_path is not None: 
+            run_name, steps = parse_checkpoint_save_path(save_path)
+            self._iter = get_step_from_checkpoint(save_path)
+            if config is None:
+                with open('{}/{}'.format(CFG_DIR, run_name), 'r') as fp:
+                    config = json.load(fp)
+        else:
+            self._iter = None
+                
         self._config = config
-        self._config['minibatch_size'] = minibatch_size
 
         for directory in (
-            self._config['log_dir'],
-            self._config['checkpoint_dir'],
-            self._config['config_dir'],
+            LOG_DIR,
+            CHECKPOINT_DIR,
+            CONFIG_DIR,
         ):
             if not os.path.exists(directory):
                 os.makedirs(directory)
@@ -83,9 +95,6 @@ class Image2Text:
             )
             if save_path is not None:
                 self._tf_saver.restore(self._tf_session, save_path)
-                self._iter = get_step_from_checkpoint(save_path)
-            else:
-                self._iter = None
 
     def _load_data(self):
         input_image_size = self._config['input_image_shape'][0]
@@ -424,7 +433,7 @@ class Image2Text:
             i += 1
             try:
                 img_id, caption_id = data_to_enqueue
-                image = dataset.get_image(
+                image_array = dataset.get_image(
                     img_id,
                     to_array=True,
                     size=input_image_size,
@@ -434,14 +443,17 @@ class Image2Text:
                     caption_id,
                 )
                 input_sequence_length = len(caption) - 1
-                mask = np.ones(input_sequence_length)
+                mask_array = np.ones(
+                    input_sequence_length,
+                    dtype=np.int32,
+                )
                 self._tf_session.run(
                     enqueue_op,
                     feed_dict={
-                        image: image,
+                        image: image_array,
                         input_seq: caption[:-1],
                         target_seq: caption[1:],
-                        mask: mask,
+                        mask: mask_array,
                     }
                 )
             except tf.errors.CancelledError:
@@ -482,7 +494,7 @@ class Image2Text:
             )
 
         summary_writer = tf.summary.FileWriter(
-            logdir='{}/{}'.format(self._config['log_dir'], run_name),
+            logdir='{}/{}'.format(LOG_DIR, run_name),
             graph=self._tf_graph,
         )
 
@@ -575,7 +587,7 @@ class Image2Text:
 
         self._tf_coordinator.join(queue_threads)
 
-        with open('{}/{}'.format(self.config['cfg_dir'], run_name), 'w') as fp:
+        with open('{}/{}'.format(CFG_DIR, run_name), 'w') as fp:
             json.dump(self._config, fp)
 
         summary_writer.close()
@@ -675,4 +687,7 @@ class Image2Text:
 def get_step_from_checkpoint(save_path):
     return int(save_path.split('-')[-1])
 
-
+def parse_checkpoint_save_path(save_path):
+    filename = save_path.split('/')[-1]
+    run_name, steps_str = fliename.split('-')
+    return (run_name, int(steps_str))
