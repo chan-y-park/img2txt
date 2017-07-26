@@ -14,6 +14,7 @@ class ImageCaptionDataset:
         self._img_ids = []
         self._data_dir = data_dir
         self._vocabulary = None 
+        # XXX: Use special word ids for the following words?
         self.start_word = '<bos>'
         self.end_word = '<eos>'
         self.unknown_word = '<unk>'
@@ -100,9 +101,15 @@ class ImageCaptionDataset:
                 for word in self.tokenize(raw_caption)]
 
     def get_sentence_from_word_ids(self, word_ids):
-        words = [self._vocabulary['word_of_id'][word_id]
-                 for word_id in word_ids]
-        sentence = ' '.join(words)
+        words = []
+        for word_id in words_ids:
+            if word_id == self._vocabulary['id_of_word'][self.end_word]:
+                break
+            else:
+                word = self._vocabulary['word_of_id'][word_id]
+                words.append(word)
+            
+        sentence = ' '.join(words) + '.'
         return sentence
 
 

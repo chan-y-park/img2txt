@@ -6,7 +6,7 @@ img2txt_using_lstm = {
     'checkpoint_dir': 'checkpoints',
     'config_dir': 'configs',
     'dataset': pascal,
-    'minibatch_size': 3,
+#    'minibatch_size': 3,
     'input_image_shape': [224, 224, 3],
     'vocabulary_size': None,
     'embedding_size': 10,
