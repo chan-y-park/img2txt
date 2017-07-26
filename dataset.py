@@ -102,7 +102,7 @@ class ImageCaptionDataset:
 
     def get_sentence_from_word_ids(self, word_ids):
         words = []
-        for word_id in words_ids:
+        for word_id in word_ids:
             if word_id == self._vocabulary['id_of_word'][self.end_word]:
                 break
             else:

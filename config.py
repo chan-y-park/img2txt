@@ -3,15 +3,15 @@ from dataset_config import pascal
 
 img2txt_using_lstm = {
     'dataset': pascal,
-    'minibatch_size': 3,
+    'minibatch_size': 32,
     'input_image_shape': [224, 224, 3],
     'vocabulary_size': None,
-    'embedding_size': 10,
+    'embedding_size': 256,
     'max_sequence_length': 20,
     'rnn_cell': {
-        'type': 'lstm',
-#        'type': 'lstm_block',
-        'num_units': 10,
+#        'type': 'lstm',
+        'type': 'lstm_block',
+        'num_units': 256,
         'forget_bias': 1.0,
         'use_peepholes': False,
     },
@@ -29,5 +29,5 @@ img2txt_using_lstm = {
         'name': 'vgg16',
         'train_dataset': 'imagenet',
     },
-    'num_training_iterations': 100,
+    'num_training_iterations': 1000,
 }

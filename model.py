@@ -23,6 +23,7 @@ from convnet import build_vgg16
 LOG_DIR = 'logs'
 CHECKPOINT_DIR = 'checkpoints'
 CONFIG_DIR = 'configs'
+NUM_ENQUEUE_THREADS = 4
 
 
 class Image2Text:
@@ -39,7 +40,7 @@ class Image2Text:
             run_name, steps = parse_checkpoint_save_path(save_path)
             self._iter = get_step_from_checkpoint(save_path)
             if config is None:
-                with open('{}/{}'.format(CFG_DIR, run_name), 'r') as fp:
+                with open('{}/{}'.format(CONFIG_DIR, run_name), 'r') as fp:
                     config = json.load(fp)
         else:
             self._iter = None
@@ -147,7 +148,7 @@ class Image2Text:
             name='mask',
         )
 
-        queue_capacity = 2 * minibatch_size
+        queue_capacity = 2 * minibatch_size * NUM_ENQUEUE_THREADS
 
         queue = tf.PaddingFIFOQueue(
             capacity=queue_capacity,
@@ -223,6 +224,24 @@ class Image2Text:
                 word_embedding,
                 input_seqs,
             )
+            if self._training:
+                pass
+            else:
+                input_embeddings = tf.squeeze(
+                    input_embeddings,
+                    axis=1, 
+                )
+                prev_rnn_states = tf.placeholder(
+                    dtype=tf.float32,
+                    shape=[minibatch_size,
+                           (2 * self._config['rnn_cell']['num_units'])],
+                    name='prev_states',
+                )
+                prev_rnn_states = tf.split(
+                    prev_rnn_states,
+                    num_or_size_splits=2,
+                    axis=1,
+                )
 
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
@@ -265,18 +284,9 @@ class Image2Text:
                         scope=scope,
                     )
                 else:
-                    prev_rnn_states = tf.placeholder(
-                        dtype=tf.float32,
-                        shape=[minibatch_size, sum(rnn_cell.state_size)],
-                        name='prev_states',
-                    )
                     rnn_outputs, new_rnn_states = rnn_cell(
                         input_embeddings,
-                        tf.split(
-                            value=prev_rnn_states,
-                            num_or_size_splits=2,
-                            axis=1,
-                        ),
+                        prev_rnn_states,
                     )
 
             if self._training:
@@ -291,13 +301,13 @@ class Image2Text:
                 )
             else:
                 tf.concat(
+                    rnn_initial_states,
                     axis=1,
-                    value=rnn_initial_states,
                     name='initial_states',
                 )
                 tf.concat(
+                    new_rnn_states,
                     axis=1,
-                    value=new_rnn_states,
                     name='new_states',
                 )
 
@@ -351,7 +361,8 @@ class Image2Text:
                     learning_rate=self._config['sgd']['initial_learning_rate']
                 )
                 train_op = sgd.minimize(
-                    loss=tf.losses.get_total_loss(),
+                    #loss=tf.losses.get_total_loss(),
+                    loss=minibatch_loss,
                     name='minimize_loss'
                 )
 
@@ -467,6 +478,10 @@ class Image2Text:
                     'train/minibatch_loss:0'
                 )
             ),
+#            tf.summary.scalar(
+#                name='total_loss',
+#                tensor=tf.losses.get_total_loss(),
+#            ),
             tf.summary.scalar(
                 name='queue_size',
                 tensor=self._tf_graph.get_tensor_by_name(
@@ -509,13 +524,17 @@ class Image2Text:
         display_iterations = num_training_iterations // 100
         save_iterations = num_training_iterations // 10
 
-        queue_threads = [threading.Thread(target=self._enqueue_thread)]
+        queue_threads = [
+            threading.Thread(target=self._enqueue_thread)
+            for i in range(NUM_ENQUEUE_THREADS)
+        ]
         for t in queue_threads:
             t.start()
 
         fetch_dict = {}
         for var_name in [
             'train/minibatch_loss',
+            'train/total_loss',
             'convnet/image_embedding/image_embeddings',
             'convnet/predictions',
             'rnn/dynamic_rnn_outputs',
@@ -555,10 +574,12 @@ class Image2Text:
 
                 if i % display_iterations == 0:
                     print(
-                        '{:g}% : L_x = {:g}'
+                        '{:g}% : minibatch_loss = {:g}'
+                        #', total_loss = {:g}.'
                         .format(
                             (i / num_training_iterations * 100),
                             rd['train/minibatch_loss'],
+                            #rd['train/total_loss'],
                         ),
                     )
                 if (
@@ -587,7 +608,7 @@ class Image2Text:
 
         self._tf_coordinator.join(queue_threads)
 
-        with open('{}/{}'.format(CFG_DIR, run_name), 'w') as fp:
+        with open('{}/{}'.format(CONFIG_DIR, run_name), 'w') as fp:
             json.dump(self._config, fp)
 
         summary_writer.close()
@@ -601,7 +622,7 @@ class Image2Text:
 
         # TODO: Use a FIFO queue for input images.
         images_array = np.empty(
-            shape=(len(img_ids, *input_image_shape)),
+            shape=(len(img_ids), *input_image_shape),
             dtype=np.float32,
         )
         for i, img_id in enumerate(img_ids):
@@ -627,9 +648,10 @@ class Image2Text:
             feed_dict=feed_dict,
         )
 
-        prev_rnn_states = rd['rnn_initial_states']
-        start_word_id = self._dataset._vocabulary(
-            self._dataset.start_word,
+        prev_rnn_states = rd['rnn/initial_states']
+        start_word_id = (
+            self._dataset
+            ._vocabulary['id_of_word'][self._dataset.start_word]
         )
         input_seqs = np.array(
             [[start_word_id] for i in range(minibatch_size)]
@@ -640,7 +662,7 @@ class Image2Text:
         sentences = [None] * minibatch_size
         # For max_sequence_length, feed input seqs
         # and fetch word probabilities & new RNN states.
-        for t in max_sequence_length:
+        for t in range(max_sequence_length):
             feed_dict = {
                 self._tf_graph.get_tensor_by_name(
                     'input_seqs:0'
@@ -653,11 +675,11 @@ class Image2Text:
                 'rnn/new_states': self._tf_graph.get_tensor_by_name(
                     'rnn/new_states:0'
                 ),
-                'rnn/word_probabilities': self._tf_graph.get_tensor_by_name(
-                    'rnn/word_probabilities:0'
+                'rnn/fc/word_probabilities': self._tf_graph.get_tensor_by_name(
+                    'rnn/fc/word_probabilities:0'
                 ),
-                'rnn/words': self._tf_graph.get_tensor_by_name(
-                    'rnn/predictions:1'
+                'rnn/fc/words': self._tf_graph.get_tensor_by_name(
+                    'rnn/fc/predictions:1'
                 ),
             }
             rd = self._tf_session.run(
@@ -665,8 +687,10 @@ class Image2Text:
                 feed_dict=feed_dict,
             )
             prev_rnn_states = rd['rnn/new_states']
-            input_seqs = rd['rnn/words']
-            output_seqs[t] = rd['rnn/words']
+            input_seqs = rd['rnn/fc/words']
+            output_seqs[:, t] = rd['rnn/fc/words'][:, 0]
+            import pdb
+            pdb.set_trace()
 
         sentences = [
             self._dataset.get_sentence_from_word_ids(seq)
@@ -689,5 +713,5 @@ def get_step_from_checkpoint(save_path):
 
 def parse_checkpoint_save_path(save_path):
     filename = save_path.split('/')[-1]
-    run_name, steps_str = fliename.split('-')
+    run_name, steps_str = filename.split('-')
     return (run_name, int(steps_str))
