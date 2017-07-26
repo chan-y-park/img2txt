@@ -10,7 +10,7 @@ img2txt_using_lstm = {
     'input_image_shape': [224, 224, 3],
     'vocabulary_size': None,
     'embedding_size': 10,
-    'max_sequence_length': 10,
+    'max_sequence_length': 20,
     'rnn_cell': {
         'type': 'lstm',
 #        'type': 'lstm_block',

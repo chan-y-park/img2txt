@@ -10,9 +10,14 @@ from dataset import PASCAL, Flickr
 from convnet import build_vgg16
 
 # TODO:
-# check inference.
-# implement file name queue.
-# check input queue consumption and add more enqueue threads.
+# Check inference.
+# Use dropout wrapper for lstm.
+# Use beam search in sentence generation.
+# Implement file name queue.
+# Check input queue consumption and add more enqueue threads.
+
+# XXX: To transfer learning between different datasets, 
+# need to have a single vocabulary for all datasets.
 
 
 class Image2Text:
@@ -117,13 +122,13 @@ class Image2Text:
             shape=input_image_shape,
             name='image',
         )
-        caption = tf.placeholder(
+        input_seq = tf.placeholder(
             dtype=tf.int32,
-            name='caption',
+            name='input_seq',
         )
-        target = tf.placeholder(
+        target_seq = tf.placeholder(
             dtype=tf.int32,
-            name='target',
+            name='target_seq',
         )
         mask = tf.placeholder(
             dtype=tf.int32,
@@ -150,7 +155,7 @@ class Image2Text:
         )
 
         enqueue_op = queue.enqueue(
-            (image, caption, target, mask),
+            (image, input_seq, target_seq, mask),
             name='enqueue_op',
         )
 
@@ -163,52 +168,33 @@ class Image2Text:
             name='size',
         )
 
-    def _build_network(self):
-        minibatch_size = self._config['minibatch_size']
+    def _build_network(self, minibatch_size=None):
+        if minibatch_size is None:
+            minibatch_size = self._config['minibatch_size']
         input_image_shape = self._config['input_image_shape']
         vocabulary_size = self._config['vocabulary_size']
         embedding_size = self._config['embedding_size']
-
-        word_embedding = tf.get_variable(
-            name='word_embedding',
-            shape=[vocabulary_size, embedding_size],
-            initializer=self._get_variable_initializer(),
-        )
 
         # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
         # inference runs for a single RNN cell pass.
         if self._training:
             # XXX: When using PaddedFIFOQueue, all captions are padded
             # to the same maximum sequence length.
-            images, captions, targets, masks = [
+            images, input_seqs, target_seqs, masks = [
                 self._tf_graph.get_tensor_by_name(
                     'input_queue/dequeued_inputs:{}'.format(i),
                 ) for i in range(4)
             ]
-
-            caption_embeddings = tf.nn.embedding_lookup(
-                word_embedding,
-                captions,
-            )
         else:
             images = tf.placeholder(
                 dtype=tf.float32,
-                shape=input_image_shape,
-                name='input_image',
+                shape=([minibatch_size] + input_image_shape),
+                name='input_images',
             )
-            rnn_state = tf.placeholder(
-                dtype=tf.float32,
-                #shape=,
-                name='rnn_state',
-            )
-            prev_word = tf.placeholder(
+            input_seqs = tf.placeholder(
                 dtype=tf.int32,
-                #shape=,
-                name='prev_word',
-            )
-            input_embedding = tf.nn.embedding_lookup(
-                word_embedding,
-                prev_word,
+                shape=[minibatch_size, 1],
+                name='input_seqs',
             )
 
         with tf.variable_scope('convnet'):
@@ -217,6 +203,16 @@ class Image2Text:
             )
 
         with tf.variable_scope('rnn'):
+            word_embedding = tf.get_variable(
+                name='word_embedding',
+                shape=[vocabulary_size, embedding_size],
+                initializer=self._get_variable_initializer(),
+            )
+            input_embeddings = tf.nn.embedding_lookup(
+                word_embedding,
+                input_seqs,
+            )
+
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
             # XXX Check RNN output size.
@@ -237,13 +233,13 @@ class Image2Text:
 
             with tf.variable_scope('lstm_cell') as scope:
                 rnn_cell = tf_lstm_cell(**lstm_kwargs)
-                rnn_zero_state = rnn_cell.zero_state(
+                rnn_zero_states = rnn_cell.zero_state(
                     batch_size=minibatch_size,
                     dtype=tf.float32,
                 )
-                _, rnn_initial_state = rnn_cell(
+                _, rnn_initial_states = rnn_cell(
                     image_embeddings,
-                    rnn_zero_state,
+                    rnn_zero_states,
                 )
 
                 scope.reuse_variables()
@@ -251,16 +247,25 @@ class Image2Text:
                 if self._training:
                     rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
                         cell=rnn_cell,
-                        inputs=caption_embeddings,
+                        inputs=input_embeddings,
                         sequence_length = tf.reduce_sum(masks, axis=1),
-                        initial_state=rnn_initial_state,
+                        initial_state=rnn_initial_states,
                         dtype=tf.float32,
                         scope=scope,
                     )
                 else:
+                    prev_rnn_states = tf.placeholder(
+                        dtype=tf.float32,
+                        shape=[minibatch_size, sum(rnn_cell.state_size)],
+                        name='prev_rnn_states',
+                    )
                     rnn_output, rnn_state = rnn_cell(
-                        input_embedding,
-                        rnn_state,
+                        input_embeddings,
+                        tf.split(
+                            value=prev_rnn_states,
+                            num_or_size_splits=2,
+                            axis=1,
+                        ),
                     )
 
             if self._training:
@@ -272,6 +277,17 @@ class Image2Text:
                     rnn_outputs,
                     [-1, rnn_output_size],
                     name='reshaped_rnn_output',
+                )
+            else:
+                tf.concat(
+                    axis=1,
+                    value=rnn_initial_state,
+                    name='rnn_initial_state',
+                )
+                tf.concat(
+                    axis=1,
+                    value=rnn_state,
+                    name='rnn_state',
                 )
 
             with tf.variable_scope('fc'):
@@ -384,16 +400,16 @@ class Image2Text:
         enqueue_op = self._tf_graph.get_operation_by_name(
             'input_queue/enqueue_op'
         )
-        input_queue_image = self._tf_graph.get_tensor_by_name(
+        image = self._tf_graph.get_tensor_by_name(
             'input_queue/image:0'
         )
-        input_queue_caption = self._tf_graph.get_tensor_by_name(
-            'input_queue/caption:0'
+        input_seq = self._tf_graph.get_tensor_by_name(
+            'input_queue/input_seq:0'
         )
-        input_queue_target = self._tf_graph.get_tensor_by_name(
-            'input_queue/target:0'
+        target_seq = self._tf_graph.get_tensor_by_name(
+            'input_queue/target_seq:0'
         )
-        input_queue_mask = self._tf_graph.get_tensor_by_name(
+        mask = self._tf_graph.get_tensor_by_name(
             'input_queue/mask:0'
         )
 
@@ -421,10 +437,10 @@ class Image2Text:
                 self._tf_session.run(
                     enqueue_op,
                     feed_dict={
-                        input_queue_image: image,
-                        input_queue_caption: caption[:-1],
-                        input_queue_target: caption[1:],
-                        input_queue_mask: mask,
+                        image: image,
+                        input_seq: caption[:-1],
+                        target_seq: caption[1:],
+                        mask: mask,
                     }
                 )
             except tf.errors.CancelledError:
@@ -499,7 +515,7 @@ class Image2Text:
             )
 
         for i, var_name in enumerate(
-            ['images', 'captions', 'targets', 'masks']
+            ['images', 'input_seqs', 'target_seqs', 'masks']
         ):
             fetches[var_name] = self._tf_graph.get_tensor_by_name(
                 'input_queue/dequeued_inputs:{}'.format(i),
@@ -564,6 +580,13 @@ class Image2Text:
         summary_writer.close()
 
         return rd
+
+    def generate_text(self, images):
+        max_sequence_length = self._config['max_sequence_length']
+        # Feed images, fetch RNN initial states.
+
+        # For max_sequence_length, feed input seqs
+        # and fetch word probabilities & new RNN states.
 
     def decode_convnet_predictions(self, predictions):
         convnet_train_dataset = self._config['convnet']['train_dataset']
