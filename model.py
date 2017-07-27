@@ -642,7 +642,7 @@ class Image2Text:
                 if self._tf_coordinator.should_stop():
                     break
 
-                learning_rate = self._get_decayed_learning_rate(i)
+                learning_rate = self._get_decayed_learning_rate(self._step)
 
                 feed_dict = {
                     self._tf_graph.get_tensor_by_name(
