@@ -347,6 +347,12 @@ class Image2Text:
                     name='predictions',
                 )
 
+        output_seqs = tf.reshape(
+            words,
+            shape=[minibatch_size, -1],
+            name='output_seqs'
+        )
+
         if self._training:
             with tf.variable_scope('train'):
                 lr = tf.placeholder(
@@ -570,7 +576,7 @@ class Image2Text:
         )
 
         if self._step is None:
-            self._step = 1
+            self._step = 0
         if max_num_steps is None:
             if num_training_epochs is None:
                 num_training_epochs = 1
@@ -600,17 +606,18 @@ class Image2Text:
             'train/minibatch_loss',
             'convnet/image_embedding/image_embeddings',
             'convnet/predictions',
-            'rnn/dynamic_rnn_outputs',
-            'rnn/reshaped_rnn_output',
-            'rnn/fc/word_log_probabilities',
+#            'rnn/dynamic_rnn_outputs',
+#            'rnn/reshaped_rnn_output',
+#            'rnn/fc/word_log_probabilities',
+            'output_seqs',
             'summary/merged/merged',
         ]:
             fetch_dict[var_name] = self._tf_graph.get_tensor_by_name(
                 var_name + ':0'
             )
-        fetch_dict['output_seqs'] = self._tf_graph.get_tensor_by_name(
-            'rnn/fc/predictions:1'
-        )
+#        fetch_dict['output_seqs'] = self._tf_graph.get_tensor_by_name(
+#            'rnn/fc/predictions:1'
+#        )
 
         for i, var_name in enumerate(
             ['images', 'input_seqs', 'target_seqs', 'masks']
@@ -625,7 +632,10 @@ class Image2Text:
             fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
 
         try:
-            for i in range(self._step, max_num_steps + 1):
+#            for i in range(self._step, max_num_steps + 1):
+            while self._step < max_num_steps:
+                self._step += 1
+
                 if self._tf_coordinator.should_stop():
                     break
 
@@ -647,24 +657,27 @@ class Image2Text:
                     global_step=i,
                 )
 
-                if i % display_step_interval == 0:
+                if self._step % display_step_interval == 0:
                     print(
                         '{:g}% : minibatch_loss = {:g}'
                         .format(
-                            (i / max_num_steps * 100),
+                            (self._step / max_num_steps * 100),
                             rd['train/minibatch_loss'],
                         ),
                     )
-
                     get_sentence = self._dataset.get_sentence_from_word_ids
-                    input_sentence = get_sentence(rd['input_seqs'][0])
+                    input_len = sum(rd['masks'][0])
+                    input_sentence = get_sentence(
+                        rd['input_seqs'][0][1:input_len]
+                    )
                     output_sentence = get_sentence(rd['output_seqs'][0])
                     print('input: {}'.format(input_sentence))
                     print('output: {}'.format(output_sentence))
+                    print('\n')
 
                 if (
-                    i % save_step_interval == 0
-                    or i == max_num_steps
+                    self._step % save_step_interval == 0
+                    or self._step == max_num_steps
                 ):
                     save_path = self._tf_saver.save(
                         self._tf_session,
@@ -673,7 +686,8 @@ class Image2Text:
                     )
                     print('checkpoint saved at {}'.format(save_path))
 
-            # End of iteration for-loop.
+
+            # End of one training step for-loop.
 
         except tf.errors.OutOfRangeError:
             raise RuntimeError
