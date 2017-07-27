@@ -30,14 +30,17 @@ class ImageCaptionDataset:
             'image': self.get_image(img_id),
         }
 
-    def get_image(self, img_id, to_array=False, size=None):
-        image = Image.open(self._data_dir + img_id)
-        if size is not None:
-            image = image.resize((size, size))
-        if to_array:
-            image = (np.array(image, dtype=np.float32)
-                     / np.iinfo(np.uint8).max)
-        return image
+#    def get_image(self, img_id, to_array=False, size=None):
+#        image = Image.open(self._data_dir + img_id)
+#        if size is not None:
+#            image = image.resize((size, size))
+#        if to_array:
+#            image = (np.array(image, dtype=np.float32)
+#                     / np.iinfo(np.uint8).max)
+#        return image
+
+    def get_image(self, img_id):
+        return Image.open(self._data_dir + img_id)
 
     def get_example(self, img_id=None):
         rd = self.get_image(img_id)

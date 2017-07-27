@@ -1,4 +1,5 @@
 import h5py
+import numpy as np
 import tensorflow as tf
 from convnet_config import vgg16
 
@@ -100,3 +101,22 @@ def get_vgg16_weights(weights_f, block_layer_name, var_name, var_shape):
         ),
         trainable=False,
     )
+
+def preprocess_image(convnet_name, image, size):
+    if convnet_name == 'vgg16':
+        image = image.resize((size, size))
+        x = np.array(image, dtype=np.float32)
+        if len(x.shape) == 2:
+            raise NotImplementedError
+        # Substracting the mean, from Keras' imagenet_utils.preprocess_input.
+        # 'RGB'->'BGR'
+        x = x[:, :, ::-1]
+        # Zero-center by mean pixel
+        x[:, :, 0] -= 103.939
+        x[:, :, 1] -= 116.779
+        x[:, :, 2] -= 123.68
+    else:
+        raise NotImplementedError
+
+    return x
+

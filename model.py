@@ -8,17 +8,8 @@ import numpy as np
 import tensorflow as tf
 
 from dataset import PASCAL, Flickr
-from convnet import build_vgg16
+from convnet import build_vgg16, preprocess_image
 
-# TODO:
-# Measure validation set BLEU score and do early-stopping.
-# Use beam search in sentence generation.
-# GRU vs. LSTM
-# Which optimizer to use, momentum vs no momentum?
-# Implement file name queue.
-
-# XXX: To transfer learning between different datasets, 
-# need to have a single vocabulary for all datasets.
 
 LOG_DIR = 'logs'
 CHECKPOINT_DIR = 'checkpoints'
@@ -439,6 +430,7 @@ class Image2Text:
 
     def _enqueue_thread(self):
         input_image_size = self._config['input_image_shape'][0]
+        convnet_name = self._config['convnet']['name']
         dataset = self._dataset
 
         num_data = len(self._data_queue)
@@ -470,9 +462,9 @@ class Image2Text:
             i += 1
             try:
                 img_id, caption_id = data_to_enqueue
-                image_array = dataset.get_image(
-                    img_id,
-                    to_array=True,
+                image_array = preprocess_image(
+                    convnet_name=convnet_name,
+                    image=dataset.get_image(img_id),
                     size=input_image_size,
                 )
                 caption = dataset.get_preprocessed_caption(
@@ -697,6 +689,7 @@ class Image2Text:
         minibatch_size = self._config['minibatch_size']
         input_image_shape = self._config['input_image_shape']
         max_sequence_length = self._config['max_sequence_length']
+        convnet_name = self._config['convnet']['name']
 
         # TODO: Use a FIFO queue for input images.
         images_array = np.empty(
@@ -704,9 +697,9 @@ class Image2Text:
             dtype=np.float32,
         )
         for i, img_id in enumerate(img_ids):
-            images_array[i] = self._dataset.get_image(
-                img_id,
-                to_array=True,
+            images_array[i] = preprocess_image(
+                convnet_name=convnet_name,
+                image=self._dataset.get_image(img_id),
                 size=input_image_shape[0],
             )
 
