@@ -99,7 +99,6 @@ class Image2Text:
                 self._tf_saver.restore(self._tf_session, save_path)
 
     def _load_data(self):
-        input_image_size = self._config['input_image_shape'][0]
         cfg_dataset = self._config['dataset']
         dataset_name = cfg_dataset['name']
         # TODO: Use a TF queue.
@@ -445,7 +444,6 @@ class Image2Text:
         )
 
     def _enqueue_thread(self):
-        minibatch_size = self._config['minibatch_size']
         input_image_size = self._config['input_image_shape'][0]
         dataset = self._dataset
 
@@ -542,10 +540,9 @@ class Image2Text:
 
         decay_steps = int(num_steps_per_epoch * num_epochs_per_decay) 
 
-        decayed_learning_rate = (
-            learning_rate
-            * (decay_rate ** (step // decay_steps))
-        )
+        decayed_learning_rate = lr_i * (decay_rate ** (step // decay_steps))
+
+        return decayed_learning_rate
         
 
     def train(
@@ -555,6 +552,7 @@ class Image2Text:
         additional_num_steps=None,
     ):
         num_examples_per_epoch = self._config['num_examples_per_epoch']
+        num_training_epochs = self._config['num_training_epochs']
         minibatch_size = self._config['minibatch_size']
         num_steps_per_epoch = (num_examples_per_epoch / minibatch_size)
 
@@ -627,7 +625,7 @@ class Image2Text:
             fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
 
         try:
-            for i in range(self._step, num_training_steps + 1):
+            for i in range(self._step, max_num_steps + 1):
                 if self._tf_coordinator.should_stop():
                     break
 
@@ -653,14 +651,14 @@ class Image2Text:
                     print(
                         '{:g}% : minibatch_loss = {:g}'
                         .format(
-                            (i / max_num_stepss * 100),
+                            (i / max_num_steps * 100),
                             rd['train/minibatch_loss'],
                         ),
                     )
 
                     get_sentence = self._dataset.get_sentence_from_word_ids
-                    input_sentence = get_sentence(input_seqs[0])
-                    output_sentence = get_sentence(output_seqs[0])
+                    input_sentence = get_sentence(rd['input_seqs'][0])
+                    output_sentence = get_sentence(rd['output_seqs'][0])
                     print('input: {}'.format(input_sentence))
                     print('output: {}'.format(output_sentence))
 

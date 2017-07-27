@@ -1,4 +1,3 @@
-from convnet_config import vgg16
 from dataset_config import pascal
 
 img2txt_using_lstm = {
