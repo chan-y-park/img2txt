@@ -22,7 +22,7 @@ img2txt_using_lstm = {
     'optimizer': {
         'initial_learning_rate': 2.0,
         'learning_rate_decay_rate': 0.5,
-        'num_epochs_per_decay': 8.0,
+        'num_epochs_per_decay': 50.0,
         'gradient_clip_norm': 5.0,
     },
     'convnet': {

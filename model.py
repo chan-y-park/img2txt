@@ -11,8 +11,7 @@ from dataset import PASCAL, Flickr
 from convnet import build_vgg16
 
 # TODO:
-# Print validation sentences during training and calculate BLEU score.
-# Use dropout wrapper for lstm.
+# Measure validation set BLEU score and do early-stopping.
 # Use beam search in sentence generation.
 # GRU vs. LSTM
 # Which optimizer to use, momentum vs no momentum?
@@ -191,7 +190,7 @@ class Image2Text:
         # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
         # inference runs for a single RNN cell pass.
         if self._training:
-            # XXX: When using PaddedFIFOQueue, all captions are padded
+            # NOTE: When using PaddedFIFOQueue, all captions are padded
             # to the same maximum sequence length.
             images, input_seqs, target_seqs, masks = [
                 self._tf_graph.get_tensor_by_name(
@@ -246,13 +245,11 @@ class Image2Text:
 
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
-            # XXX Check RNN output size.
             rnn_output_size = cfg_rnn_cell['num_units']
             lstm_kwargs = {
                 'num_units': cfg_rnn_cell['num_units'],
                 'forget_bias': cfg_rnn_cell['forget_bias'],
             }
-            # TODO: Use LSTMBlockCell.
             if cfg_rnn_cell['type'] == 'lstm_block':
                 tf_lstm_cell = tf.contrib.rnn.LSTMBlockCell
                 lstm_kwargs['use_peephole'] = cfg_rnn_cell['use_peepholes']
@@ -376,15 +373,6 @@ class Image2Text:
                 )
                 tf.losses.add_loss(minibatch_loss)
 
-                # TODO: Use learning rate decay and clipping.
-                # Using contrib.layers.optimize_loss?
-#                sgd = tf.train.GradientDescentOptimizer(
-#                    learning_rate=self._config['sgd']['initial_learning_rate']
-#                )
-#                train_op = sgd.minimize(
-#                    loss=minibatch_loss,
-#                    name='minimize_loss'
-#                )
                 optimizer = tf.train.GradientDescentOptimizer(
                     learning_rate=lr,
                 )
@@ -609,18 +597,12 @@ class Image2Text:
             'train/minibatch_loss',
             'convnet/image_embedding/image_embeddings',
             'convnet/predictions',
-#            'rnn/dynamic_rnn_outputs',
-#            'rnn/reshaped_rnn_output',
-#            'rnn/fc/word_log_probabilities',
             'output_seqs',
             'summary/merged/merged',
         ]:
             fetch_dict[var_name] = self._tf_graph.get_tensor_by_name(
                 var_name + ':0'
             )
-#        fetch_dict['output_seqs'] = self._tf_graph.get_tensor_by_name(
-#            'rnn/fc/predictions:1'
-#        )
 
         for i, var_name in enumerate(
             ['images', 'input_seqs', 'target_seqs', 'masks']
@@ -635,7 +617,6 @@ class Image2Text:
             fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
 
         try:
-#            for i in range(self._step, max_num_steps + 1):
             while self._step < max_num_steps:
                 self._step += 1
 
