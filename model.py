@@ -577,14 +577,17 @@ class Image2Text:
 
         if self._step is None:
             self._step = 0
-        if max_num_steps is None:
+
+        # XXX: Clean-up the following.
+        if additional_num_steps is not None:
+            max_num_steps = self._step + additional_num_steps
+            num_training_epochs = max_num_steps / num_steps_per_epoch
+        elif max_num_steps is None:
             if num_training_epochs is None:
                 num_training_epochs = 1
             max_num_steps = num_steps_per_epoch * num_training_epochs
         else:
             num_training_epochs = max_num_steps / num_steps_per_epoch
-        if additional_num_steps is not None:
-            max_num_steps += additional_num_steps
 
         print(
             'Training for {} steps ({:g} epochs).'
@@ -654,7 +657,7 @@ class Image2Text:
 
                 summary_writer.add_summary(
                     summary=rd['summary/merged/merged'],
-                    global_step=i,
+                    global_step=self._step,
                 )
 
                 if self._step % display_step_interval == 0:
@@ -681,8 +684,8 @@ class Image2Text:
                 ):
                     save_path = self._tf_saver.save(
                         self._tf_session,
-                        'checkpoints/{}'.format(run_name),
-                        i,
+                        save_path='checkpoints/{}'.format(run_name),
+                        global_step=self._step,
                     )
                     print('checkpoint saved at {}'.format(save_path))
 
