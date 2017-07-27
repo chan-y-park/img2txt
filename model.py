@@ -11,11 +11,12 @@ from dataset import PASCAL, Flickr
 from convnet import build_vgg16
 
 # TODO:
-# Check inference.
+# Print validation sentences during training and calculate BLEU score.
 # Use dropout wrapper for lstm.
 # Use beam search in sentence generation.
+# GRU vs. LSTM
+# Which optimizer to use, momentum vs no momentum?
 # Implement file name queue.
-# Check input queue consumption and add more enqueue threads.
 
 # XXX: To transfer learning between different datasets, 
 # need to have a single vocabulary for all datasets.
@@ -23,7 +24,7 @@ from convnet import build_vgg16
 LOG_DIR = 'logs'
 CHECKPOINT_DIR = 'checkpoints'
 CONFIG_DIR = 'configs'
-NUM_ENQUEUE_THREADS = 4
+NUM_ENQUEUE_THREADS = 2
 
 
 class Image2Text:
@@ -38,12 +39,12 @@ class Image2Text:
     ):
         if save_path is not None: 
             run_name, steps = parse_checkpoint_save_path(save_path)
-            self._iter = get_step_from_checkpoint(save_path)
+            self._step = get_step_from_checkpoint(save_path)
             if config is None:
                 with open('{}/{}'.format(CONFIG_DIR, run_name), 'r') as fp:
                     config = json.load(fp)
         else:
-            self._iter = None
+            self._step = None
                 
         self._config = config
 
@@ -125,6 +126,7 @@ class Image2Text:
                     (img_id, caption_id)
                 )
         self._dataset = dataset
+        self._config['num_examples_per_epoch'] = len(self._data_queue)
 
     def _build_input_queue(self):
         minibatch_size = self._config['minibatch_size']
@@ -263,6 +265,15 @@ class Image2Text:
 
             with tf.variable_scope('lstm_cell') as scope:
                 rnn_cell = tf_lstm_cell(**lstm_kwargs)
+                if self._training:
+                    keep_prob = cfg_rnn_cell['dropout_keep_probability']
+                    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
+                        rnn_cell,
+                        input_keep_prob=keep_prob,
+                        output_keep_prob=keep_prob,
+                        state_keep_prob=1.0,
+                        variational_recurrent=False,
+                    )
                 rnn_zero_states = rnn_cell.zero_state(
                     batch_size=minibatch_size,
                     dtype=tf.float32,
@@ -339,6 +350,11 @@ class Image2Text:
 
         if self._training:
             with tf.variable_scope('train'):
+                lr = tf.placeholder(
+                    dtype=tf.float32,
+                    shape=[],
+                    name='learning_rate',
+                )
                 loss_function = tf.nn.sparse_softmax_cross_entropy_with_logits
                 targets = tf.reshape(target_seqs, [-1])
                 unmasked_losses = loss_function(
@@ -357,14 +373,32 @@ class Image2Text:
 
                 # TODO: Use learning rate decay and clipping.
                 # Using contrib.layers.optimize_loss?
-                sgd = tf.train.GradientDescentOptimizer(
-                    learning_rate=self._config['sgd']['initial_learning_rate']
+#                sgd = tf.train.GradientDescentOptimizer(
+#                    learning_rate=self._config['sgd']['initial_learning_rate']
+#                )
+#                train_op = sgd.minimize(
+#                    loss=minibatch_loss,
+#                    name='minimize_loss'
+#                )
+                optimizer = tf.train.GradientDescentOptimizer(
+                    learning_rate=lr,
                 )
-                train_op = sgd.minimize(
-                    #loss=tf.losses.get_total_loss(),
+                grads_and_vars = optimizer.compute_gradients(
                     loss=minibatch_loss,
-                    name='minimize_loss'
                 )
+                gradients, variables = zip(*grads_and_vars)
+                clipped_gradients, _ = tf.clip_by_global_norm(
+                    gradients,
+                    self._config['optimizer']['gradient_clip_norm'],
+                )
+                clipped_grads_and_vars = list(
+                    zip(clipped_gradients, variables)
+                )
+                train_op = optimizer.apply_gradients(
+                    clipped_grads_and_vars,
+                    name='minimize_loss',
+                )
+
 
     def _build_convnet(self, input_images):
         minibatch_size = self._config['minibatch_size']
@@ -478,10 +512,12 @@ class Image2Text:
                     'train/minibatch_loss:0'
                 )
             ),
-#            tf.summary.scalar(
-#                name='total_loss',
-#                tensor=tf.losses.get_total_loss(),
-#            ),
+            tf.summary.scalar(
+                name='learning_rate',
+                tensor=self._tf_graph.get_tensor_by_name(
+                    'train/learning_rate:0'
+                )
+            ),
             tf.summary.scalar(
                 name='queue_size',
                 tensor=self._tf_graph.get_tensor_by_name(
@@ -494,12 +530,34 @@ class Image2Text:
             name='merged',
         )
 
+    def _get_decayed_learning_rate(self, step):
+        minibatch_size = self._config['minibatch_size']
+        num_examples_per_epoch = self._config['num_examples_per_epoch']
+        num_steps_per_epoch = (num_examples_per_epoch / minibatch_size)
+
+        cfg_optimizer = self._config['optimizer']
+        lr_i = cfg_optimizer['initial_learning_rate']
+        decay_rate = cfg_optimizer['learning_rate_decay_rate']
+        num_epochs_per_decay = cfg_optimizer['num_epochs_per_decay']
+
+        decay_steps = int(num_steps_per_epoch * num_epochs_per_decay) 
+
+        decayed_learning_rate = (
+            learning_rate
+            * (decay_rate ** (step // decay_steps))
+        )
+        
+
     def train(
         self,
         run_name=None,
-        max_num_iters=None,
-        additional_num_iters=None,
+        max_num_steps=None,
+        additional_num_steps=None,
     ):
+        num_examples_per_epoch = self._config['num_examples_per_epoch']
+        minibatch_size = self._config['minibatch_size']
+        num_steps_per_epoch = (num_examples_per_epoch / minibatch_size)
+
         if not self._training:
             raise RuntimeError
 
@@ -513,16 +571,24 @@ class Image2Text:
             graph=self._tf_graph,
         )
 
-        if self._iter is None:
-            self._iter = 1
-        if max_num_iters is not None:
-            self._config['num_training_iterations'] = max_num_iters
-        if additional_num_iters is not None:
-           self._config['num_training_iterations'] += additional_num_iters
+        if self._step is None:
+            self._step = 1
+        if max_num_steps is None:
+            if num_training_epochs is None:
+                num_training_epochs = 1
+            max_num_steps = num_steps_per_epoch * num_training_epochs
+        else:
+            num_training_epochs = max_num_steps / num_steps_per_epoch
+        if additional_num_steps is not None:
+            max_num_steps += additional_num_steps
 
-        num_training_iterations = self._config['num_training_iterations']
-        display_iterations = num_training_iterations // 100
-        save_iterations = num_training_iterations // 10
+        print(
+            'Training for {} steps ({:g} epochs).'
+            .format(max_num_steps, num_training_epochs)
+        )
+
+        display_step_interval = max_num_steps // 100
+        save_step_interval = max_num_steps // 10
 
         queue_threads = [
             threading.Thread(target=self._enqueue_thread)
@@ -534,7 +600,6 @@ class Image2Text:
         fetch_dict = {}
         for var_name in [
             'train/minibatch_loss',
-            'train/total_loss',
             'convnet/image_embedding/image_embeddings',
             'convnet/predictions',
             'rnn/dynamic_rnn_outputs',
@@ -545,6 +610,9 @@ class Image2Text:
             fetch_dict[var_name] = self._tf_graph.get_tensor_by_name(
                 var_name + ':0'
             )
+        fetch_dict['output_seqs'] = self._tf_graph.get_tensor_by_name(
+            'rnn/fc/predictions:1'
+        )
 
         for i, var_name in enumerate(
             ['images', 'input_seqs', 'target_seqs', 'masks']
@@ -559,12 +627,21 @@ class Image2Text:
             fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
 
         try:
-            for i in range(self._iter, num_training_iterations + 1):
+            for i in range(self._step, num_training_steps + 1):
                 if self._tf_coordinator.should_stop():
                     break
 
+                learning_rate = self._get_decayed_learning_rate(i)
+
+                feed_dict = {
+                    self._tf_graph.get_tensor_by_name(
+                        'train/learning_rate:0'
+                    ): learning_rate,
+                }
+
                 rd = self._tf_session.run(
                     fetches=fetch_dict,
+                    feed_dict=feed_dict,
                 )
 
                 summary_writer.add_summary(
@@ -572,19 +649,24 @@ class Image2Text:
                     global_step=i,
                 )
 
-                if i % display_iterations == 0:
+                if i % display_step_interval == 0:
                     print(
                         '{:g}% : minibatch_loss = {:g}'
-                        #', total_loss = {:g}.'
                         .format(
-                            (i / num_training_iterations * 100),
+                            (i / max_num_stepss * 100),
                             rd['train/minibatch_loss'],
-                            #rd['train/total_loss'],
                         ),
                     )
+
+                    get_sentence = self._dataset.get_sentence_from_word_ids
+                    input_sentence = get_sentence(input_seqs[0])
+                    output_sentence = get_sentence(output_seqs[0])
+                    print('input: {}'.format(input_sentence))
+                    print('output: {}'.format(output_sentence))
+
                 if (
-                    i % save_iterations == 0
-                    or i == num_training_iterations
+                    i % save_step_interval == 0
+                    or i == max_num_steps
                 ):
                     save_path = self._tf_saver.save(
                         self._tf_session,
@@ -689,8 +771,6 @@ class Image2Text:
             prev_rnn_states = rd['rnn/new_states']
             input_seqs = rd['rnn/fc/words']
             output_seqs[:, t] = rd['rnn/fc/words'][:, 0]
-            import pdb
-            pdb.set_trace()
 
         sentences = [
             self._dataset.get_sentence_from_word_ids(seq)
