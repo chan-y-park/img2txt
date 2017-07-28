@@ -30,15 +30,6 @@ class ImageCaptionDataset:
             'image': self.get_image(img_id),
         }
 
-#    def get_image(self, img_id, to_array=False, size=None):
-#        image = Image.open(self._data_dir + img_id)
-#        if size is not None:
-#            image = image.resize((size, size))
-#        if to_array:
-#            image = (np.array(image, dtype=np.float32)
-#                     / np.iinfo(np.uint8).max)
-#        return image
-
     def get_image(self, img_id):
         return Image.open(self._data_dir + img_id)
 
@@ -64,13 +55,6 @@ class ImageCaptionDataset:
             for caption in captions:
                 words = self.tokenize(caption)
                 for word in words:
-#                    try:
-#                        frequency[word_id] += 1
-#                    except KeyError:
-#                        vocabulary['id_of_word'][word] = word_id
-#                        vocabulary['word_of_id'][word_id] = word
-#                        frequency[word_id] = 1
-#                        word_id += 1
                     try:
                         word_count[word] += 1
                     except KeyError:
