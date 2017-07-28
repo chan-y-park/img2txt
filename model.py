@@ -394,19 +394,18 @@ class Image2Text:
         convnet_name = self._config['convnet']['name']
 
         if convnet_name == 'vgg16':
-            convnet_top_layer = build_vgg16(
+            build_vgg16(
                 input_images,
                 minibatch_size,
             )
         else:
             raise NotImplementedError
 
-        tf.identity(
-            convnet_top_layer,
-            name='predictions',
+        convnet_features = self._tf_graph.get_tensor_by_name(
+            'convnet/top/fc2/activation:0',
         )
 
-        _, convnet_output_size = convnet_top_layer.shape.as_list()
+        _, convnet_output_size = convnet_features.shape.as_list()
         with tf.variable_scope('image_embedding'):
             W = tf.get_variable(
                 name='W',
@@ -419,7 +418,7 @@ class Image2Text:
                 initializer=self._get_variable_initializer(),
             )
             image_embeddings = tf.add(
-                tf.matmul(convnet_top_layer, W),
+                tf.matmul(convnet_features, W),
                 b,
                 name='image_embeddings',
             )
@@ -593,7 +592,7 @@ class Image2Text:
         for var_name in [
             'train/minibatch_loss',
             'convnet/image_embedding/image_embeddings',
-            'convnet/predictions',
+            'convnet/top/predictions/activation',
             'output_seqs',
             'summary/merged/merged',
         ]:
@@ -647,7 +646,7 @@ class Image2Text:
                         ),
                     )
                     predictions = np.reshape(
-                        rd['convnet/predictions'],
+                        rd['convnet/top/predictions/activation'],
                         (minibatch_size, 1000),
                     )
                     print('Image predictions')
@@ -725,8 +724,10 @@ class Image2Text:
             'rnn/initial_states': self._tf_graph.get_tensor_by_name(
                 'rnn/initial_states:0'
             ),
-            'convnet/predictions': self._tf_graph.get_tensor_by_name(
-                'convnet/predictions:0'
+            'convnet/top/predictions/activation': (
+                self._tf_graph.get_tensor_by_name(
+                    'convnet/top/predictions/activation:0'
+                )
             ),
         }
         rd = self._tf_session.run(
@@ -734,7 +735,7 @@ class Image2Text:
             feed_dict=feed_dict,
         )
 
-        convnet_predictions = rd['convnet/predictions']
+        convnet_predictions = rd['convnet/top/predictions/activation']
         prev_rnn_states = rd['rnn/initial_states']
 
         start_word_id = (
