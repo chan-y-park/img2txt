@@ -7,6 +7,10 @@ import json
 import numpy as np
 import tensorflow as tf
 
+from tensorflow.contrib.keras.python.keras.applications.imagenet_utils import (
+    decode_predictions
+)
+
 from dataset import PASCAL, Flickr
 from convnet import build_vgg16, preprocess_image
 
@@ -54,7 +58,7 @@ class Image2Text:
         self._load_data()
 
         self._tf_session = None
-        self._tf_coordinator = tf.train.Coordinator()
+        self._tf_coordinator = None 
 
         self._tf_config = tf.ConfigProto()
         self._tf_config.gpu_options.allow_growth = gpu_memory_allow_growth
@@ -577,6 +581,7 @@ class Image2Text:
         display_step_interval = max_num_steps // 100
         save_step_interval = max_num_steps // 10
 
+        self._tf_coordinator = tf.train.Coordinator()
         queue_threads = [
             threading.Thread(target=self._enqueue_thread)
             for i in range(NUM_ENQUEUE_THREADS)
@@ -641,6 +646,13 @@ class Image2Text:
                             rd['train/minibatch_loss'],
                         ),
                     )
+                    predictions = np.reshape(
+                        rd['convnet/predictions'],
+                        (minibatch_size, 1000),
+                    )
+                    print('Image predictions')
+                    for _, obj, prob in decode_predictions(predictions)[0]:
+                        print('{}: {:g}'.format(obj, prob))
                     get_sentence = self._dataset.get_sentence_from_word_ids
                     input_len = sum(rd['masks'][0])
                     input_sentence = get_sentence(
@@ -685,7 +697,7 @@ class Image2Text:
 
         return rd
 
-    def generate_text(self, img_ids):
+    def get_inference(self, img_ids):
         minibatch_size = self._config['minibatch_size']
         input_image_shape = self._config['input_image_shape']
         max_sequence_length = self._config['max_sequence_length']
@@ -713,13 +725,18 @@ class Image2Text:
             'rnn/initial_states': self._tf_graph.get_tensor_by_name(
                 'rnn/initial_states:0'
             ),
+            'convnet/predictions': self._tf_graph.get_tensor_by_name(
+                'convnet/predictions:0'
+            ),
         }
         rd = self._tf_session.run(
             fetches=fetch_dict,
             feed_dict=feed_dict,
         )
 
+        convnet_predictions = rd['convnet/predictions']
         prev_rnn_states = rd['rnn/initial_states']
+
         start_word_id = (
             self._dataset
             ._vocabulary['id_of_word'][self._dataset.start_word]
@@ -761,9 +778,19 @@ class Image2Text:
             input_seqs = rd['rnn/fc/words']
             output_seqs[:, t] = rd['rnn/fc/words'][:, 0]
 
+        rd = {
+            'convnet_predictions': convnet_predictions,
+            'output_sequences': output_seqs,
+        }
+
+        return rd
+
+    def generate_text(self, img_ids):
+        rd = self.get_inference(img_ids)
+
         sentences = [
             self._dataset.get_sentence_from_word_ids(seq)
-            for seq in output_seqs
+            for seq in rd['output_sequences']
         ]
 
         return sentences
