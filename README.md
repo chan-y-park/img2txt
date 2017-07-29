@@ -26,11 +26,13 @@ but the code is written from scratch using TensorFlow APIs.
 * Python 3.6
 * NumPy
 * TensorFlow 1.2
+* Pillow
 * NLTK (NLTK data not needed)
 * Flask (for web UI)
 
 ### Datasets
 
 ### Pre-trained models
+* Copy Keras' pretrained model ~/.keras/models/vgg16_weights_tf_dim_ordering_tf_kernels.h5 to in img2txt/pretrained/vgg16_weights.h5.
 
 ## Acknowledgements
