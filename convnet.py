@@ -70,13 +70,14 @@ def build_vgg16(input_layer, minibatch_size):
                                 var_name,
                                 var_shape,
                             )
-                        activation = tf.add(
+                        preactivation = tf.add(
                             tf.matmul(prev_layer, layer_var['W']),
                             layer_var['b'],
-                            name='activation',
+                            name='preactivation',
                         )
                         new_layer = f_layer(
-                            activation,
+                            preactivation,
+                            name='activation',
                         )
                     
                     else:
@@ -85,7 +86,7 @@ def build_vgg16(input_layer, minibatch_size):
                     # End of building a layer.
                     prev_layer = new_layer
 
-    return prev_layer
+    # End of building VGG16.
 
 
 def get_vgg16_weights(weights_f, block_layer_name, var_name, var_shape):
