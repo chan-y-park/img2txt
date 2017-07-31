@@ -3,6 +3,7 @@ import string
 import json
 
 import numpy as np
+import nltk
 
 from PIL import Image
 
@@ -44,39 +45,39 @@ class ImageCaptionDataset:
             'captions': self.get_captions(img_id),
         }
 
-    def tokenize(self, sentence):
-        # TODO: Use nltk.
-        words = sentence.split()
-        return (
-            [self.start_word]
-            + [word.lower().strip(',"<>') for word in words]
-            + [self.end_word]
-        )
+#    def tokenize(self, sentence):
+#        # TODO: Use nltk.
+#        words = sentence.split()
+#        return (
+#            [self.start_word]
+#            + [word.lower().strip(',"<>') for word in words]
+#            + [self.end_word]
+#        )
 
-    def get_vocabulary(self, min_word_count=1):
-        word_count = {}
-        for img_id, captions in self._captions.items():
-            for caption in captions:
-                words = self.tokenize(caption)
-                for word in words:
-                    try:
-                        word_count[word] += 1
-                    except KeyError:
-                        word_count[word] = 1
-
-        vocabulary = {
-            'id_of_word': {},
-            'word_of_id': {},
-        }
-        # TODO: Set word id in descending order of word count.
-        word_id = 0
-        for word, count in word_count.items():
-            if count >= min_word_count:
-                vocabulary['id_of_word'][word] = word_id
-                vocabulary['word_of_id'][word_id] = word
-                word_id += 1
-                        
-        return vocabulary, word_count
+#    def get_vocabulary(self, min_word_count=1):
+#        word_count = {}
+#        for img_id, captions in self._captions.items():
+#            for caption in captions:
+#                words = self.tokenize(caption)
+#                for word in words:
+#                    try:
+#                        word_count[word] += 1
+#                    except KeyError:
+#                        word_count[word] = 1
+#
+#        vocabulary = {
+#            'id_of_word': {},
+#            'word_of_id': {},
+#        }
+#        # TODO: Set word id in descending order of word count.
+#        word_id = 0
+#        for word, count in word_count.items():
+#            if count >= min_word_count:
+#                vocabulary['id_of_word'][word] = word_id
+#                vocabulary['word_of_id'][word_id] = word
+#                word_id += 1
+#                        
+#        return vocabulary, word_count
 
     def get_vocabulary_size(self):
         if self._vocabulary is None:
@@ -110,23 +111,89 @@ class Vocabulary:
     def __init__(
         self,
         min_word_count=1,
+        dataset=None,
     ):
+        self._word_count = {}
         self._id_of_word = {}
         self._word_of_id = {}
         self._size = None
-        # XXX: Use special word ids for the following words?
+
         self.start_word = '<bos>'
+        self.start_word_id = -1
+
         self.end_word = '<eos>'
+        self.end_word_id = -1
+
         self.unknown_word = '<unk>'
+        self.unknown_word_id = -3
+
+        self._id_of_word[self.start_word] = self.start_word_id
+        self._id_of_word[self.end_word] = self.end_word_id
+        self._id_of_word[self.unknown_word] = self.unknown_word_id
+
+        self._word_of_id[self.start_word_id] = self.start_word
+        self._word_of_id[self.end_word_id] = self.end_word
+        self._word_of_id[self.unknown_word_id] = self.unknown_word
+
+        self._count(dataset)
+        self._build(min_word_count)
 
     def get_id_of_word(self, word):
-        return self._id_of_word(word)
+        try:
+            word_id = self._id_of_word[word]
+        except KeyError:
+            word_id = self.unknown_word_id
+        return word_id
 
     def get_word_of_id(self, word_id):
-        return self._word_of_id(word_id)
+        return self._word_of_id[word_id]
 
     def get_size(self):
-        return self._size
+        return len(self._id_of_word)
+
+    def get_word_count(self, word):
+        return self._word_count[word]
+
+    def get_sorted_words(self):
+        return sorted(
+            self._word_count.keys(),
+            key=self.get_word_count,
+            reverse=True,
+        )
+
+    def _count(self, dataset):
+        for img_id, caption_id in dataset._data:
+            caption = dataset._captions[img_id][caption_id]
+            tokens = (
+                [self.start_word]
+                + [w.lower() for w in nltk.word_tokenize(caption)]
+                + [self.end_word]
+            )
+            for word in tokens:
+                try:
+                    self._word_count[word] += 1
+                except KeyError:
+                    self._word_count[word] = 1
+
+    def _build(self, min_word_count):
+        # NOTE: No word for word_id == 0 
+        # to avoid any confusion with zero padding.
+        word_id = 1
+        self._word_count[self.unknown_word] = 0
+        # Start with <bos>, <eos>, and <unk>.
+        for word, count in self._word_count.items():
+            if (
+                word == self.start_word
+                or word == self.end_word
+            ):
+                pass
+            elif count < min_word_count:
+                self._word_count[self.unknown_word] += 1
+            else:
+                self._id_of_word[word] = word_id
+                self._word_of_id[word_id] = word
+                word_id += 1
+         
 
 
 class PASCAL(ImageCaptionDataset):

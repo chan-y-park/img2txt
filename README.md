@@ -27,7 +27,7 @@ but the code is written from scratch using TensorFlow APIs.
 * NumPy
 * TensorFlow 1.2
 * Pillow
-* NLTK (NLTK data not needed)
+* NLTK (NLTK data needed for tokenization; only nltk_data/tokenizers/punkt/PY3/english.pickle needed.)
 * Flask (for web UI)
 
 ### Datasets
