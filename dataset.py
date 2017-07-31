@@ -45,40 +45,6 @@ class ImageCaptionDataset:
             'captions': self.get_captions(img_id),
         }
 
-#    def tokenize(self, sentence):
-#        # TODO: Use nltk.
-#        words = sentence.split()
-#        return (
-#            [self.start_word]
-#            + [word.lower().strip(',"<>') for word in words]
-#            + [self.end_word]
-#        )
-
-#    def get_vocabulary(self, min_word_count=1):
-#        word_count = {}
-#        for img_id, captions in self._captions.items():
-#            for caption in captions:
-#                words = self.tokenize(caption)
-#                for word in words:
-#                    try:
-#                        word_count[word] += 1
-#                    except KeyError:
-#                        word_count[word] = 1
-#
-#        vocabulary = {
-#            'id_of_word': {},
-#            'word_of_id': {},
-#        }
-#        # TODO: Set word id in descending order of word count.
-#        word_id = 0
-#        for word, count in word_count.items():
-#            if count >= min_word_count:
-#                vocabulary['id_of_word'][word] = word_id
-#                vocabulary['word_of_id'][word_id] = word
-#                word_id += 1
-#                        
-#        return vocabulary, word_count
-
     def get_vocabulary_size(self):
         if self._vocabulary is None:
             self._vocabulary, _ = self.get_vocabulary()
@@ -248,7 +214,6 @@ class PASCAL(ImageCaptionDataset):
                                 )
 
         # End of caption file preprocessing.
-#        self._vocabulary, _ = self.get_vocabulary()
 
 
 class Flickr(ImageCaptionDataset):
