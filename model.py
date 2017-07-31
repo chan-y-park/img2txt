@@ -111,6 +111,7 @@ class Image2Text:
         else:
             raise ValueError('Unknown dataset name: {}.'.format(dataset_name))
 
+        # XXX: Move to dataset API
         self._config['vocabulary_size'] = dataset.get_vocabulary_size()
         for img_id in dataset._img_ids:
             captions = dataset.get_captions(img_id)

@@ -31,6 +31,8 @@ but the code is written from scratch using TensorFlow APIs.
 * Flask (for web UI)
 
 ### Datasets
+* PASCAL
+
 
 ### Pre-trained models
 * Copy Keras' pretrained model ~/.keras/models/vgg16_weights_tf_dim_ordering_tf_kernels.h5 to in img2txt/pretrained/vgg16_weights.h5.
