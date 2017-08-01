@@ -55,6 +55,9 @@ class Image2Text:
         else:
             self._training = training
 
+        self._dataset = None
+        self._vocabulary = None
+        self._data_queue = None
         self._load_data()
 
         self._tf_session = None
@@ -185,29 +188,38 @@ class Image2Text:
 
         # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
         # inference runs for a single RNN cell pass.
-        if self._training:
-            # NOTE: When using PaddedFIFOQueue, all captions are padded
-            # to the same maximum sequence length.
-            images, input_seqs, target_seqs, masks = [
-                self._tf_graph.get_tensor_by_name(
-                    'input_queue/dequeued_inputs:{}'.format(i),
-                ) for i in range(4)
-            ]
-        else:
-            images = tf.placeholder(
-                dtype=tf.float32,
-                shape=([minibatch_size] + input_image_shape),
-                name='input_images',
-            )
-            input_seqs = tf.placeholder(
-                dtype=tf.int32,
-                shape=[minibatch_size, 1],
-                name='input_seqs',
-            )
 
-        with tf.variable_scope('convnet'):
+        # Training.
+        # NOTE: When using PaddedFIFOQueue, all captions are padded
+        # to the same maximum sequence length.
+        images, input_seqs, target_seqs, masks = [
+            self._tf_graph.get_tensor_by_name(
+                'input_queue/dequeued_inputs:{}'.format(i),
+            ) for i in range(4)
+        ]
+
+        # Inference.
+        inferece_images = tf.placeholder(
+            dtype=tf.float32,
+            shape=([minibatch_size] + input_image_shape),
+            name='inference_images',
+        )
+        inference_input_seqs = tf.placeholder(
+            dtype=tf.int32,
+            shape=[minibatch_size, 1],
+            name='inference_input_seqs',
+        )
+
+        with tf.variable_scope('convnet') as scope:
+            # Training.
             image_embeddings = self._build_convnet(
                 images,
+            )
+
+            # Inference.
+            scope.reuse_variables()
+            inference_image_embeddings = self._build_convnet(
+                inference_images,
             )
 
         with tf.variable_scope('rnn'):
@@ -216,28 +228,34 @@ class Image2Text:
                 shape=[vocabulary_size, embedding_size],
                 initializer=self._get_variable_initializer(),
             )
+
+            # Training.
             input_embeddings = tf.nn.embedding_lookup(
                 word_embedding,
                 input_seqs,
             )
-            if self._training:
-                pass
-            else:
-                input_embeddings = tf.squeeze(
-                    input_embeddings,
-                    axis=1, 
-                )
-                prev_rnn_states = tf.placeholder(
-                    dtype=tf.float32,
-                    shape=[minibatch_size,
-                           (2 * self._config['rnn_cell']['num_units'])],
-                    name='prev_states',
-                )
-                prev_rnn_states = tf.split(
-                    prev_rnn_states,
-                    num_or_size_splits=2,
-                    axis=1,
-                )
+
+            # Inference.
+            inference_input_embeddings = tf.nn.embedding_lookup(
+                word_embedding,
+                inference_input_seqs,
+            )
+            inference_input_embeddings = tf.squeeze(
+                input_embeddings,
+                axis=1,
+                name='inference_input_embedding',
+            )
+            inference_prev_rnn_states = tf.placeholder(
+                dtype=tf.float32,
+                shape=[minibatch_size,
+                       (2 * self._config['rnn_cell']['num_units'])],
+                name='inference_prev_states',
+            )
+            inference_prev_rnn_states = tf.split(
+                inference_prev_rnn_states,
+                num_or_size_splits=2,
+                axis=1,
+            )
 
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
@@ -277,42 +295,44 @@ class Image2Text:
 
                 scope.reuse_variables()
 
-                if self._training:
-                    rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
-                        cell=rnn_cell,
-                        inputs=input_embeddings,
-                        sequence_length = tf.reduce_sum(masks, axis=1),
-                        initial_state=rnn_initial_states,
-                        dtype=tf.float32,
-                        scope=scope,
-                    )
-                else:
-                    rnn_outputs, new_rnn_states = rnn_cell(
-                        input_embeddings,
-                        prev_rnn_states,
-                    )
+                # Training.
+                rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
+                    cell=rnn_cell,
+                    inputs=input_embeddings,
+                    sequence_length = tf.reduce_sum(masks, axis=1),
+                    initial_state=rnn_initial_states,
+                    dtype=tf.float32,
+                    scope=scope,
+                )
 
-            if self._training:
-                tf.identity(
-                    rnn_outputs,
-                    name='dynamic_rnn_outputs',
+                # Inference.
+                inference_rnn_outputs, inference_new_rnn_states = rnn_cell(
+                    inference_input_embeddings,
+                    inference_prev_rnn_states,
                 )
-                rnn_outputs = tf.reshape(
-                    rnn_outputs,
-                    [-1, rnn_output_size],
-                    name='reshaped_rnn_output',
-                )
-            else:
-                tf.concat(
-                    rnn_initial_states,
-                    axis=1,
-                    name='initial_states',
-                )
-                tf.concat(
-                    new_rnn_states,
-                    axis=1,
-                    name='new_states',
-                )
+
+            # Training.
+            tf.identity(
+                rnn_outputs,
+                name='dynamic_rnn_outputs',
+            )
+            rnn_outputs = tf.reshape(
+                rnn_outputs,
+                [-1, rnn_output_size],
+                name='reshaped_rnn_output',
+            )
+
+            #Inference.
+            tf.concat(
+                rnn_initial_states,
+                axis=1,
+                name='inference_initial_states',
+            )
+            tf.concat(
+                new_rnn_states,
+                axis=1,
+                name='inference_new_states',
+            )
 
             with tf.variable_scope('fc'):
                 W = tf.get_variable(
@@ -325,68 +345,89 @@ class Image2Text:
                     shape=(vocabulary_size),
                     initializer=self._get_variable_initializer(),
                 )
+
+                # Training.
                 word_log_probabilities = tf.add(
                     tf.matmul(rnn_outputs, W),
                     b,
                     name='word_log_probabilities',
                 )
-                word_probabilities = tf.nn.softmax(
-                    word_log_probabilities,
-                    name='word_probabilities',
-                )
-                word_logits, words = tf.nn.top_k(
+                word_logits, word_ids = tf.nn.top_k(
                     word_log_probabilities,
                     k=1,
-                    name='predictions',
+#                    name='predictions',
                 )
 
+                # Inference.
+                inference_word_log_probabilities = tf.add(
+                    tf.matmul(inference_rnn_outputs, W),
+                    b,
+                    name='inference_word_log_probabilities',
+                )
+                inference_word_probabilities = tf.nn.softmax(
+                    inference_word_log_probabilities,
+                    name='inference_word_probabilities',
+                )
+                inference_word_logits, inference_word_ids = tf.nn.top_k(
+                    inference_word_log_probabilities,
+                    k=1,
+                    name='inference_predictions',
+                )
+
+        # Training.
         output_seqs = tf.reshape(
-            words,
+            word_ids,
             shape=[minibatch_size, -1],
             name='output_seqs'
         )
 
-        if self._training:
-            with tf.variable_scope('train'):
-                lr = tf.placeholder(
-                    dtype=tf.float32,
-                    shape=[],
-                    name='learning_rate',
-                )
-                loss_function = tf.nn.sparse_softmax_cross_entropy_with_logits
-                targets = tf.reshape(target_seqs, [-1])
-                unmasked_losses = loss_function(
-                    labels=targets,
-                    logits=word_log_probabilities,
-                    name='unmasked_losses',
-                )
+        # Inference.
+        inference_output_seqs = tf.reshape(
+            inference_word_ids,
+            shape=[minibatch_size, -1],
+            name='inference_output_seqs'
+        )
 
-                masks = tf.to_float(tf.reshape(masks, [-1]))
-                minibatch_loss = tf.div(
-                    tf.reduce_sum(tf.multiply(unmasked_losses, masks)),
-                    tf.reduce_sum(masks),
-                    name='minibatch_loss'
-                )
-                tf.losses.add_loss(minibatch_loss)
+        with tf.variable_scope('train'):
+            lr = tf.placeholder(
+                dtype=tf.float32,
+                shape=[],
+                name='learning_rate',
+            )
+            loss_function = tf.nn.sparse_softmax_cross_entropy_with_logits
+            targets = tf.reshape(target_seqs, [-1])
+            unmasked_losses = loss_function(
+                labels=targets,
+                logits=word_log_probabilities,
+                name='unmasked_losses',
+            )
 
-                optimizer = tf.train.GradientDescentOptimizer(
-                    learning_rate=lr,
-                )
-                grads_and_vars = optimizer.compute_gradients(
-                    loss=minibatch_loss,
-                )
-                gradients, variables = zip(*grads_and_vars)
-                clipped_gradients, _ = tf.clip_by_global_norm(
-                    gradients,
-                    self._config['optimizer']['gradient_clip_norm'],
-                )
-                clipped_grads_and_vars = list(
-                    zip(clipped_gradients, variables)
-                )
-                train_op = optimizer.apply_gradients(
-                    clipped_grads_and_vars,
-                    name='minimize_loss',
-                )
+            masks = tf.to_float(tf.reshape(masks, [-1]))
+            minibatch_loss = tf.div(
+                tf.reduce_sum(tf.multiply(unmasked_losses, masks)),
+                tf.reduce_sum(masks),
+                name='minibatch_loss'
+            )
+            tf.losses.add_loss(minibatch_loss)
+
+            optimizer = tf.train.GradientDescentOptimizer(
+                learning_rate=lr,
+            )
+            grads_and_vars = optimizer.compute_gradients(
+                loss=minibatch_loss,
+            )
+            gradients, variables = zip(*grads_and_vars)
+            clipped_gradients, _ = tf.clip_by_global_norm(
+                gradients,
+                self._config['optimizer']['gradient_clip_norm'],
+            )
+            clipped_grads_and_vars = list(
+                zip(clipped_gradients, variables)
+            )
+            train_op = optimizer.apply_gradients(
+                clipped_grads_and_vars,
+                name='minimize_loss',
+            )
 
 
     def _build_convnet(self, input_images):
@@ -718,12 +759,12 @@ class Image2Text:
         # Feed images, fetch RNN initial states.
         feed_dict = {
             self._tf_graph.get_tensor_by_name(
-                'input_images:0'
+                'inference_input_images:0'
             ): images_array,
         }
         fetch_dict = {
-            'rnn/initial_states': self._tf_graph.get_tensor_by_name(
-                'rnn/initial_states:0'
+            'rnn/inference_initial_states': self._tf_graph.get_tensor_by_name(
+                'rnn/inference_initial_states:0'
             ),
             'convnet/top/predictions/activation': (
                 self._tf_graph.get_tensor_by_name(
@@ -737,14 +778,10 @@ class Image2Text:
         )
 
         convnet_predictions = rd['convnet/top/predictions/activation']
-        prev_rnn_states = rd['rnn/initial_states']
+        prev_rnn_states = rd['rnn/inference_initial_states']
 
-        start_word_id = (
-            self._dataset
-            ._vocabulary['id_of_word'][self._dataset.start_word]
-        )
         input_seqs = np.array(
-            [[start_word_id] for i in range(minibatch_size)]
+            [[self._vocabulary.start_word_id] for i in range(minibatch_size)]
         )
         output_seqs = np.zeros(
             shape=(minibatch_size, max_sequence_length),
@@ -755,30 +792,30 @@ class Image2Text:
         for t in range(max_sequence_length):
             feed_dict = {
                 self._tf_graph.get_tensor_by_name(
-                    'input_seqs:0'
+                    'inference_input_seqs:0'
                 ): input_seqs,
                 self._tf_graph.get_tensor_by_name(
-                    'rnn/prev_states:0'
+                    'rnn/inference_prev_states:0'
                 ): prev_rnn_states,
             }
             fetch_dict = {
-                'rnn/new_states': self._tf_graph.get_tensor_by_name(
-                    'rnn/new_states:0'
+                'rnn/inference_new_states': self._tf_graph.get_tensor_by_name(
+                    'rnn/inference_new_states:0'
                 ),
                 'rnn/fc/word_probabilities': self._tf_graph.get_tensor_by_name(
                     'rnn/fc/word_probabilities:0'
                 ),
-                'rnn/fc/words': self._tf_graph.get_tensor_by_name(
-                    'rnn/fc/predictions:1'
+                'rnn/fc/inference_word_ids': self._tf_graph.get_tensor_by_name(
+                    'rnn/fc/inference_predictions:1'
                 ),
             }
             rd = self._tf_session.run(
                 fetches=fetch_dict,
                 feed_dict=feed_dict,
             )
-            prev_rnn_states = rd['rnn/new_states']
-            input_seqs = rd['rnn/fc/words']
-            output_seqs[:, t] = rd['rnn/fc/words'][:, 0]
+            prev_rnn_states = rd['rnn/inference_new_states']
+            input_seqs = rd['rnn/fc/inference_word_ids']
+            output_seqs[:, t] = rd['rnn/fc/inference_word_ids'][:, 0]
 
         rd = {
             'convnet_predictions': convnet_predictions,
@@ -791,7 +828,7 @@ class Image2Text:
         rd = self.get_inference(img_ids)
 
         sentences = [
-            self._dataset.get_sentence_from_word_ids(seq)
+            self._vocabulary.get_sentence_from_word_ids(seq)
             for seq in rd['output_sequences']
         ]
 
