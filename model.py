@@ -512,9 +512,10 @@ class Image2Text:
                     image=dataset.get_image(img_id),
                     size=input_image_size,
                 )
-                caption = dataset.get_preprocessed_caption(
-                    img_id,
-                    caption_id,
+
+                raw_caption = self._dataset._captions[img_id][caption_id]
+                caption = self._vocabulary.get_preprocessed_sentence(
+                    raw_caption,
                 )
                 input_sequence_length = len(caption) - 1
                 mask_array = np.ones(
@@ -694,7 +695,7 @@ class Image2Text:
                     print('Image predictions')
                     for _, obj, prob in decode_predictions(predictions)[0]:
                         print('{}: {:g}'.format(obj, prob))
-                    get_sentence = self._dataset.get_sentence_from_word_ids
+                    get_sentence = self._vocabulary.get_sentence_from_word_ids
                     input_len = sum(rd['masks'][0])
                     input_sentence = get_sentence(
                         rd['input_seqs'][0][1:input_len]
