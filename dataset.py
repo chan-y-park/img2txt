@@ -18,7 +18,6 @@ class ImageCaptionDataset:
         # A list of (image_file_name, caption_id)
         self._data = []
         self._image_dir = image_dir
-        self._vocabulary = None 
 
     def get_captions(self, img_id):
         return self._captions[img_id]
@@ -44,33 +43,6 @@ class ImageCaptionDataset:
             'image': img, 
             'captions': self.get_captions(img_id),
         }
-
-    def get_vocabulary_size(self):
-        if self._vocabulary is None:
-            self._vocabulary, _ = self.get_vocabulary()
-        return len(self._vocabulary['id_of_word'])
-
-    def get_preprocessed_caption(self, img_id, caption_id):
-        if self._vocabulary is None:
-            self._vocabulary, _ = self.get_vocabulary()
-
-        raw_caption = self.get_captions(img_id)[caption_id]
-        return [self._vocabulary['id_of_word'][word]
-                for word in self.tokenize(raw_caption)]
-
-    def get_sentence_from_word_ids(self, word_ids):
-        if self._vocabulary is None:
-            self._vocabulary, _ = self.get_vocabulary()
-        words = []
-        for word_id in word_ids:
-            if word_id == self._vocabulary['id_of_word'][self.end_word]:
-                break
-            else:
-                word = self._vocabulary['word_of_id'][word_id]
-                words.append(word)
-            
-        sentence = ' '.join(words) + '.'
-        return sentence
 
 
 class Vocabulary:
@@ -127,14 +99,18 @@ class Vocabulary:
             reverse=True,
         )
 
+    def tokenize(self, sentence):
+        tokens = (
+            [self.start_word]
+            + [w.lower() for w in nltk.word_tokenize(sentence)]
+            + [self.end_word]
+        )
+        return tokens
+
     def _count(self, dataset):
         for img_id, caption_id in dataset._data:
             caption = dataset._captions[img_id][caption_id]
-            tokens = (
-                [self.start_word]
-                + [w.lower() for w in nltk.word_tokenize(caption)]
-                + [self.end_word]
-            )
+            tokens = self.tokenize(caption)
             for word in tokens:
                 try:
                     self._word_count[word] += 1
@@ -159,7 +135,22 @@ class Vocabulary:
                 self._id_of_word[word] = word_id
                 self._word_of_id[word_id] = word
                 word_id += 1
-         
+
+    def get_preprocessed_sentence(self, raw_sentence):
+        return [self.get_id_of_word(word)
+                for word in self.tokenize(raw_sentence)]
+
+    def get_sentence_from_word_ids(self, word_ids):
+        words = []
+        for word_id in word_ids:
+            if word_id == self.end_word_id:
+                break
+            else:
+                word = self.get_word_of_id(word_id)
+                words.append(word)
+            
+        sentence = ' '.join(words) + '.'
+        return sentence
 
 
 class PASCAL(ImageCaptionDataset):
