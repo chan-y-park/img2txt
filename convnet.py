@@ -1,15 +1,103 @@
 import h5py
 import numpy as np
 import tensorflow as tf
-from convnet_config import vgg16
+#from convnet_config import vgg16
 
-def build_vgg16(input_layer, minibatch_size):
+from inception_v4 import inception_v4
+from inception_utils import inception_arg_scope
+
+def build_inception(
+    name,
+    input_layer,
+    minibatch_size,
+    tf_session,
+    pretrained_model_file_path='pretrained/inception_v4.ckpt',
+    scope=None,
+):
+    if name == 'inception_v3':
+        build_fn = inception_v3
+    elif name == 'inception_v4':
+        build_fn = inception_v4
+    with slim.arg_scope(inception_arg_scope()):
+        logits, endpoints = build_fn(
+            input_layer,
+            create_aux_logits=False,
+            is_training=False,
+        )
+    for var in tf_graph.get_collection('variables'):
+        var_name_prefix = '{}/'.format(scope.name)
+        var_name_suffix = ':0'
+        saved_var_name = var.name[len(var_name_prefix):-len(var_name_suffix)]
+        var_dict[saved_var_name] = var
+    saver = tf.train.Saver(
+        var_list=var_dict,
+    )
+    saver.restore(
+        tf_session,
+        save_path=pretrained_model_file_path,
+    )
+
+    return endpoints
+
+def build_vgg16(
+    input_layer,
+    minibatch_size,
+    pretrained_model_file_path='pretrained/vgg16_weights.h5'
+):
+    network_config = [
+        ('block1',
+            (
+                ('conv1', {'W': [3, 3, 3, 64], 'b': [64]}),
+                ('conv2', {'W': [3, 3, 64, 64], 'b': [64]}),
+                ('pool', {'k': [2, 2], 's': [2, 2]}),
+            )
+        ),
+        ('block2',
+            (
+                ('conv1', {'W': [3, 3, 64, 128], 'b': [128]}),
+                ('conv2', {'W': [3, 3, 128, 128], 'b': [128]}),
+                ('pool', {'k': [2, 2], 's': [2, 2]}),
+            )
+        ),
+        ('block3',
+            (
+                ('conv1', {'W': [3, 3, 128, 256], 'b': [256]}),
+                ('conv2', {'W': [3, 3, 256, 256], 'b': [256]}),
+                ('conv3', {'W': [3, 3, 256, 256], 'b': [256]}),
+                ('pool', {'k': [2, 2], 's': [2, 2]}),
+            )
+        ),
+        ('block4',
+            (
+                ('conv1', {'W': [3, 3, 256, 512], 'b': [512]}),
+                ('conv2', {'W': [3, 3, 512, 512], 'b': [512]}),
+                ('conv3', {'W': [3, 3, 512, 512], 'b': [512]}),
+                ('pool', {'k': [2, 2], 's': [2, 2]}),
+            )
+        ),
+        ('block5', 
+            (
+                ('conv1', {'W': [3, 3, 512, 512], 'b': [512]}),
+                ('conv2', {'W': [3, 3, 512, 512], 'b': [512]}),
+                ('conv3', {'W': [3, 3, 512, 512], 'b': [512]}),
+                ('pool', {'k': [2, 2], 's': [2, 2]}),
+            )
+        ),
+        ('top',
+            (
+                ('flatten', ()),
+                ('fc1', (4096)),
+                ('fc2', (4096)),
+                ('predictions', (1000)),
+            )
+        ),
+    ]
     weights_f = h5py.File(
-        vgg16['weights_file_path'],
+        pretrained_model_file_path,
         mode='r',
     )
     prev_layer = input_layer
-    for block_name, block_conf in vgg16['network']:
+    for block_name, block_conf in network_config:
         with tf.variable_scope(block_name):
             for layer_name, layer_conf in block_conf:
                 with tf.variable_scope(layer_name):
