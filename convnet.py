@@ -1,8 +1,10 @@
 import h5py
 import numpy as np
 import tensorflow as tf
+import tensorflow.contrib.slim as slim
 #from convnet_config import vgg16
 
+from inception_v3 import inception_v3
 from inception_v4 import inception_v4
 from inception_utils import inception_arg_scope
 
@@ -11,6 +13,7 @@ def build_inception(
     input_layer,
     minibatch_size,
     tf_session,
+    tf_graph,
     pretrained_model_file_path='pretrained/inception_v4.ckpt',
     scope=None,
 ):
@@ -24,7 +27,8 @@ def build_inception(
             create_aux_logits=False,
             is_training=False,
         )
-    for var in tf_graph.get_collection('variables'):
+    var_dict = {}
+    for var in tf_graph.get_collection('variables', scope=scope.name):
         var_name_prefix = '{}/'.format(scope.name)
         var_name_suffix = ':0'
         saved_var_name = var.name[len(var_name_prefix):-len(var_name_suffix)]
@@ -192,11 +196,13 @@ def get_vgg16_weights(weights_f, block_layer_name, var_name, var_shape):
     )
 
 def preprocess_image(convnet_name, image, size):
+    # TODO: Center-crop and resize.
+    image = image.resize((size, size))
+    x = np.array(image, dtype=np.float32)
+    if len(x.shape) == 2:
+        raise NotImplementedError
+
     if convnet_name == 'vgg16':
-        image = image.resize((size, size))
-        x = np.array(image, dtype=np.float32)
-        if len(x.shape) == 2:
-            raise NotImplementedError
         # Substracting the mean, from Keras' imagenet_utils.preprocess_input.
         # 'RGB'->'BGR'
         x = x[:, :, ::-1]
@@ -204,6 +210,9 @@ def preprocess_image(convnet_name, image, size):
         x[:, :, 0] -= 103.939
         x[:, :, 1] -= 116.779
         x[:, :, 2] -= 123.68
+    elif convnet_name[len('inception'):] == 'inception':
+        x /= (np.iinfo(np.uint8).max / 2)
+        x -= 1
     else:
         raise NotImplementedError
 

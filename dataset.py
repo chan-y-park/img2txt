@@ -19,6 +19,9 @@ class ImageCaptionDataset:
         self._data = []
         self._image_dir = image_dir
 
+    def get_size(self):
+        return len(self._data)
+
     def get_captions(self, img_id):
         return self._captions[img_id]
 
