@@ -26,11 +26,9 @@ class Image2Text:
     def __init__(
         self,
         config=None,
-#        training=None,
         training_dataset=None,
         validation_dataset=None,
         vocabulary=None,
-#        minibatch_size=None,
         gpu_memory_fraction=None,
         gpu_memory_allow_growth=True,
         save_path=None,
@@ -53,11 +51,6 @@ class Image2Text:
         ):
             if not os.path.exists(directory):
                 os.makedirs(directory)
-
-#        if training is None:
-#            raise ValueError('Set training either to be True or False.')
-#        else:
-#            self._training = training
 
         self._training_dataset = training_dataset
         self._validation_dataset = validation_dataset
@@ -84,8 +77,8 @@ class Image2Text:
             with tf.variable_scope('input_queue'):
                 self._build_input_queue()
 
-#            self._build_network()
-            self._build_network(use_input_queue=False)
+            self._build_network()
+#            self._build_network(use_input_queue=False)
 
             with tf.variable_scope('summary'):
                 self._build_summary_ops()
@@ -604,22 +597,6 @@ class Image2Text:
     def _input_queue_enqueue_thread(self):
         dataset = self._training_dataset
 
-        enqueue_op = self._tf_graph.get_operation_by_name(
-            'input_queue/enqueue_op'
-        )
-        image = self._tf_graph.get_tensor_by_name(
-            'input_queue/image:0'
-        )
-        input_seq = self._tf_graph.get_tensor_by_name(
-            'input_queue/input_seq:0'
-        )
-        target_seq = self._tf_graph.get_tensor_by_name(
-            'input_queue/target_seq:0'
-        )
-        mask = self._tf_graph.get_tensor_by_name(
-            'input_queue/mask:0'
-        )
-
         while not self._tf_coordinator.should_stop():
             data_to_enqueue = self._data_queue.get() 
             try:
@@ -633,12 +610,22 @@ class Image2Text:
                     )
                 )
                 self._tf_session.run(
-                    enqueue_op,
+                    fetches=self._tf_graph.get_operation_by_name(
+                        'input_queue/enqueue_op'
+                    ),
                     feed_dict={
-                        image: image_array,
-                        input_seq: caption_seq[:-1],
-                        target_seq: caption_seq[1:],
-                        mask: mask_array,
+                        self._tf_graph.get_tensor_by_name(
+                            'input_queue/image:0'
+                        ): image_array,
+                        self._tf_graph.get_tensor_by_name(
+                            'input_queue/input_seq:0'
+                        ): caption_seq[:-1],
+                        self._tf_graph.get_tensor_by_name(
+                            'input_queue/target_seq:0'
+                        ): caption_seq[1:],
+                        self._tf_graph.get_tensor_by_name(
+                            'input_queue/mask:0'
+                        ): mask_array,
                     }
                 )
             except tf.errors.CancelledError:
@@ -779,7 +766,7 @@ class Image2Text:
             'output_seqs',
             'train/unmasked_losses/unmasked_losses',
             'train/minibatch_loss',
-            'convnet/image_embedding/image_embeddings',
+            'image_embedding/image_embeddings',
             'convnet/training_predictions',
             'output_seqs',
             'summary/train/merged/merged',
