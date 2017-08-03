@@ -474,41 +474,41 @@ class Image2Text:
                 shape=[minibatch_size],
                 name='targets',
             )
-            eval_masks = tf.placeholder(
-                dtype=tf.int32,
-                shape=[minibatch_size],
-                name='masks',
-            )
+#            eval_masks = tf.placeholder(
+#                dtype=tf.int32,
+#                shape=[minibatch_size],
+#                name='masks',
+#            )
             unmasked_eval_losses = loss_function(
                 labels=eval_targets,
                 logits=inference_word_log_probabilities,
                 name='unmasked_losses',
             )
 
-            eval_masks = tf.to_float(eval_masks)
-            eval_loss = tf.div(
-                tf.reduce_sum(tf.multiply(unmasked_eval_losses, eval_masks)),
-                tf.reduce_sum(eval_masks),
-                name='loss'
-            )
+#            eval_masks = tf.to_float(eval_masks)
+#            eval_loss = tf.div(
+#                tf.reduce_sum(tf.multiply(unmasked_eval_losses, eval_masks)),
+#                tf.reduce_sum(eval_masks),
+#                name='loss'
+#            )
 
-#            # Placeholders for evaluation summaries.
-#            input_image_ids = tf.placeholder(
-#                dtype=tf.string,
-#                name='input_image_ids',
-#            )
-#            target_sentences = tf.placeholder(
-#                dtype=tf.string,
-#                name='target_sentences',
-#            )
-#            output_sentences = tf.placeholder(
-#                dtype=tf.string,
-#                name='output_sentences',
-#            )
-#            eval_total_loss = tf.placeholder(
-#                dtype=tf.float32,
-#                name='total_loss',
-#            )
+            # Placeholders for evaluation summaries.
+            input_image_ids = tf.placeholder(
+                dtype=tf.string,
+                name='input_image_ids',
+            )
+            target_sentences = tf.placeholder(
+                dtype=tf.string,
+                name='target_sentences',
+            )
+            output_sentences = tf.placeholder(
+                dtype=tf.string,
+                name='output_sentences',
+            )
+            eval_minibatch_loss = tf.placeholder(
+                dtype=tf.float32,
+                name='minibatch_loss',
+            )
 
     def _build_convnet(self, input_images, reuse=None, scope=None):
         minibatch_size = self._config['minibatch_size']
@@ -590,7 +590,10 @@ class Image2Text:
             if i >= num_data:
                 i %= num_data
                 random.shuffle(self._data_queue)
-            self._data_queue.put(data[i])
+            try:
+                self._data_queue.put(data[i], block=True, timeout=1)
+            except queue.Full:
+               continue 
             i += 1
 
     def _get_preprocessed_input(self, dataset, img_id, caption_id):
@@ -607,12 +610,13 @@ class Image2Text:
         caption_sequence = self._vocabulary.get_preprocessed_sentence(
             caption,
         )
-        caption_sequence_length = len(caption_sequence) - 1
-        mask = np.ones(
-            caption_sequence_length,
-            dtype=np.int32,
-        )
-        return (image_array, caption_sequence, mask)
+#        caption_sequence_length = len(caption_sequence) - 1
+#        mask = np.ones(
+#            caption_sequence_length,
+#            dtype=np.int32,
+#        )
+#        return (image_array, caption_sequence, mask)
+        return (image_array, caption_sequence)
 
     def _input_queue_enqueue_thread(self):
 #        input_image_size = self._config['input_image_shape'][0]
@@ -655,10 +659,15 @@ class Image2Text:
 #                    input_sequence_length,
 #                    dtype=np.int32,
 #                )
-                rv = self._get_preprocessed_input(
+                image_array, caption_seq = self._get_preprocessed_input(
                     self._training_dataset, img_id, caption_id,
                 )
-                image_array, caption_seq, mask_array = rv
+                # NOTE: Discard <eos> when evaluating the training loss.
+                caption_seq_len = len(caption_seq) - 1
+                mask_array = np.ones(
+                    caption_seq_len,
+                    dtype=np.int32,
+                )
                 self._tf_session.run(
                     enqueue_op,
                     feed_dict={
@@ -699,50 +708,30 @@ class Image2Text:
             )
 
         with tf.variable_scope('eval'):
-            input_image_ids = tf.placeholder(
-                dtype=tf.string,
-                name='input_image_ids',
-            )
-            target_sentences = tf.placeholder(
-                dtype=tf.string,
-                name='target_sentences',
-            )
-            output_sentences = tf.placeholder(
-                dtype=tf.string,
-                name='output_sentences',
-            )
-            eval_total_loss = tf.placeholder(
-                dtype=tf.float32,
-                name='total_loss',
-            )
             eval_summaries = [
                 tf.summary.text(
                     name='input_image_ids',
-                    tensor=input_image_ids,
-#                    tensor=self._tf_graph.get_tensor_by_name(
-#                        'eval/input_image_ids:0'
-#                    ),
+                    tensor=self._tf_graph.get_tensor_by_name(
+                        'eval/input_image_ids:0'
+                    ),
                 ),
                 tf.summary.text(
                     name='target_sentences',
-                    tensor=target_sentences,
-#                    tensor=self._tf_graph.get_tensor_by_name(
-#                        'eval/target_sentences:0'
-#                    ),
+                    tensor=self._tf_graph.get_tensor_by_name(
+                        'eval/target_sentences:0'
+                    ),
                 ),
                 tf.summary.text(
                     name='output_sentences',
-                    tensor=output_sentences,
-#                    tensor=self._tf_graph.get_tensor_by_name(
-#                        'eval/output_sentences:0'
-#                    ),
+                    tensor=self._tf_graph.get_tensor_by_name(
+                        'eval/output_sentences:0'
+                    ),
                 ),
                 tf.summary.scalar(
-                    name='total_loss',
-                    tensor=eval_total_loss,
-#                    tensor=self._tf_graph.get_tensor_by_name(
-#                        'eval/total_loss:0'
-#                    ),
+                    name='minibatch_loss',
+                    tensor=self._tf_graph.get_tensor_by_name(
+                        'eval/minibatch_loss:0'
+                    ),
                 )
             ]
             eval_summary_op = tf.summary.merge(
@@ -811,6 +800,7 @@ class Image2Text:
             .format(max_num_steps, num_training_epochs)
         )
 
+        eval_step_interval = 100
         display_step_interval = max_num_steps // 100
         save_step_interval = max_num_steps // 10
 
@@ -875,6 +865,12 @@ class Image2Text:
                     global_step=self._step,
                 )
 
+                if self._step % eval_step_interval == 0:
+                    merged_eval_summary = self.evaluate_validation()
+                    summary_writer.add_summary(
+                        summary=merged_eval_summary,
+                        global_step=self._step,
+                    )
                 if self._step % display_step_interval == 0:
                     print(
                         '{:g}% : minibatch_loss = {:g}'
@@ -900,13 +896,6 @@ class Image2Text:
                     print('input: {}'.format(input_sentence))
                     print('output: {}'.format(output_sentence))
                     print('\n')
-
-                    rd = self.evaluate_validation()
-                    summary_writer.add_summary(
-                        summary=rd['summary/eval/merged/merged'],
-                        global_step=self._step,
-                    )
-
                 if (
                     self._step % save_step_interval == 0
                     or self._step == max_num_steps
@@ -979,8 +968,9 @@ class Image2Text:
         )
         output_seqs = np.zeros(
             shape=(minibatch_size, max_sequence_length),
+            dtype=np.int32,
         )
-        total_loss = 0
+        minibatch_loss = 0
         # For max_sequence_length, feed input seqs
         # and fetch word probabilities & new RNN states.
         for t in range(max_sequence_length):
@@ -1004,12 +994,17 @@ class Image2Text:
                 feed_dict[self._tf_graph.get_tensor_by_name(
                     'eval/targets:0'
                 )] = targets[:, t]
-                feed_dict[self._tf_graph.get_tensor_by_name(
-                    'eval/masks:0'
-                )] = masks[:, t]
-                fetch_dict['eval/loss'] = self._tf_graph.get_tensor_by_name(
-                    'eval/loss:0'
+#                feed_dict[self._tf_graph.get_tensor_by_name(
+#                    'eval/masks:0'
+#                )] = masks[:, t]
+                fetch_dict[
+                    'eval/unmasked_losses'
+                ] = self._tf_graph.get_tensor_by_name(
+                    'eval/unmasked_losses/unmasked_losses:0'
                 )
+#                fetch_dict['eval/loss'] = = self._tf_graph.get_tensor_by_name(
+#                    'eval/loss:0'
+#                )
             rd = self._tf_session.run(
                 fetches=fetch_dict,
                 feed_dict=feed_dict,
@@ -1018,12 +1013,19 @@ class Image2Text:
             inputs = rd['rnn/fc/inference_word_ids']
             output_seqs[:, t] = rd['rnn/fc/inference_word_ids'][:, 0]
             if targets is not None:
-                total_loss += rd['eval/loss']
-
+                mask_t = masks[:, t]
+                unmasked_losses = rd['eval/unmasked_losses']
+                len_mask = np.sum(mask_t)
+                if len_mask > 0:
+                    loss = (
+                        np.sum(unmasked_losses * mask_t, dtype=np.float32)
+                        / len_mask
+                    )
+                    minibatch_loss += loss
         rd = {
             'convnet_predictions': convnet_predictions,
             'output_sequences': output_seqs,
-            'total_loss': total_loss,
+            'minibatch_loss': minibatch_loss,
         }
 
         return rd
@@ -1054,8 +1056,14 @@ class Image2Text:
         )
         for i, (img_id, caption_id) in enumerate(data):
             img_ids.append(img_id)
-            image_array, target_seq, mask = self._get_preprocessed_input(
+            image_array, target_seq = self._get_preprocessed_input(
                 self._validation_dataset, img_id, caption_id,
+            )
+            # NOTE: Include <eos> when evaluating the validation loss.
+            target_seq_len = len(target_seq)
+            mask = np.ones(
+                target_seq_len,
+                dtype=np.int32,
             )
             images_array[i] = image_array
             target_seq = target_seq[:max_sequence_length]
@@ -1063,13 +1071,19 @@ class Image2Text:
             mask = mask[:max_sequence_length]
             masks[i,:len(mask)] = mask
             target_sentences.append(
-                self._validation_dataset.get_captions(img_id)[caption_id]
+                '{}: {}'.format(
+                    i,
+                    self._validation_dataset.get_captions(img_id)[caption_id],
+                )
             )
 
         rd = self.get_inference(images_array, targets, masks)
         output_sentences = [
-            self._vocabulary.get_sentence_from_word_ids(seq)
-            for seq in rd['output_sequences']
+            '{}: {}'.format(
+                i,
+                self._vocabulary.get_sentence_from_word_ids(seq)
+            )
+            for i, seq in enumerate(rd['output_sequences'])
         ]
 
         fetch_dict = {
@@ -1080,23 +1094,24 @@ class Image2Text:
         feed_dict = {
             # TODO: Display images instead of their ids.
             self._tf_graph.get_tensor_by_name(
-                'summary/eval/input_image_ids:0'
-            ) : img_ids,
+                'eval/input_image_ids:0'
+            ) : ['{}: {}'.format(i, img_id)
+                 for i, img_id in enumerate(img_ids)],
             self._tf_graph.get_tensor_by_name(
-                'summary/eval/target_sentences:0'
+                'eval/target_sentences:0'
             ) : target_sentences,
             self._tf_graph.get_tensor_by_name(
-                'summary/eval/output_sentences:0'
+                'eval/output_sentences:0'
             ) : output_sentences,
             self._tf_graph.get_tensor_by_name(
-                'summary/eval/total_loss:0'
-            ) : rd['total_loss'],
+                'eval/minibatch_loss:0'
+            ) : rd['minibatch_loss'],
         }
         rd = self._tf_session.run(
             fetches=fetch_dict,
             feed_dict=feed_dict,
         )
-        return rd
+        return rd['summary/eval/merged/merged']
 
     def generate_text(self, images_array):
         rd = self.get_inference(images_array)
