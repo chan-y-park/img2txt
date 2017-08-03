@@ -589,7 +589,7 @@ class Image2Text:
         while not self._tf_coordinator.should_stop():
             if i >= num_data:
                 i %= num_data
-                random.shuffle(self._data_queue)
+                random.shuffle(data)
             try:
                 self._data_queue.put(data[i], block=True, timeout=1)
             except queue.Full:
@@ -984,6 +984,11 @@ class Image2Text:
             fetch_dict = {
                 'rnn/inference_new_states': self._tf_graph.get_tensor_by_name(
                     'rnn/inference_new_states:0'
+                ),
+                'rnn/fc/inference_word_logits': (
+                    self._tf_graph.get_tensor_by_name(
+                        'rnn/fc/inference_predictions:0'
+                    )
                 ),
                 'rnn/fc/inference_word_ids': self._tf_graph.get_tensor_by_name(
                     'rnn/fc/inference_predictions:1'
