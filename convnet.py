@@ -214,7 +214,7 @@ def preprocess_image(convnet_name, image, size):
         x[:, :, 0] -= 103.939
         x[:, :, 1] -= 116.779
         x[:, :, 2] -= 123.68
-    elif convnet_name[len('inception'):] == 'inception':
+    elif convnet_name[:len('inception')] == 'inception':
         x /= (np.iinfo(np.uint8).max / 2)
         x -= 1
     else:

@@ -195,14 +195,16 @@ class Vocabulary:
         self._word_of_id = {}
         self._size = None
 
+        # NOTE: Negative word ids don't work
+        # with sparse argmax-type functions.
         self.start_word = '<bos>'
-        self.start_word_id = -1
+        self.start_word_id = 1
 
         self.end_word = '<eos>'
-        self.end_word_id = -1
+        self.end_word_id = 2
 
         self.unknown_word = '<unk>'
-        self.unknown_word_id = -3
+        self.unknown_word_id = 3
 
         self._id_of_word[self.start_word] = self.start_word_id
         self._id_of_word[self.end_word] = self.end_word_id
@@ -259,7 +261,7 @@ class Vocabulary:
     def _build(self, min_word_count):
         # NOTE: No word for word_id == 0 
         # to avoid any confusion with zero padding.
-        word_id = 1
+        word_id = 4
         self._word_count[self.unknown_word] = 0
         # Start with <bos>, <eos>, and <unk>.
         for word, count in self._word_count.items():

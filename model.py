@@ -259,9 +259,8 @@ class Image2Text:
                 inference_inputs,
             )
             inference_input_embeddings = tf.squeeze(
-                input_embeddings,
+                inference_input_embeddings,
                 axis=1,
-                name='inference_input_embedding',
             )
             inference_prev_rnn_states = tf.placeholder(
                 dtype=tf.float32,
@@ -393,7 +392,7 @@ class Image2Text:
                 word_logits, word_ids = tf.nn.top_k(
                     word_log_probabilities,
                     k=1,
-#                    name='predictions',
+                    #name='predictions',
                 )
 
                 # Inference.
@@ -434,6 +433,8 @@ class Image2Text:
                 name='learning_rate',
             )
             targets = tf.reshape(target_seqs, [-1])
+            # NOTE: The name of unmaksed_losses is
+            # train/unmasked_losses/unmasked_losses:0.
             unmasked_losses = loss_function(
                 labels=targets,
                 logits=word_log_probabilities,
@@ -470,46 +471,44 @@ class Image2Text:
         with tf.variable_scope('eval'):
             eval_targets = tf.placeholder(
                 dtype=tf.int32,
-                shape=[minibatch_size, 1],
+                shape=[minibatch_size],
                 name='targets',
             )
             eval_masks = tf.placeholder(
                 dtype=tf.int32,
-                shape=[minibatch_size, 1],
+                shape=[minibatch_size],
                 name='masks',
             )
-
-            eval_targets = tf.reshape(eval_targets, [-1])
             unmasked_eval_losses = loss_function(
                 labels=eval_targets,
                 logits=inference_word_log_probabilities,
                 name='unmasked_losses',
             )
 
-            eval_masks = tf.to_float(tf.reshape(eval_masks, [-1]))
+            eval_masks = tf.to_float(eval_masks)
             eval_loss = tf.div(
-                tf.reduce_sum(tf.multiply(unmasked_losses, masks)),
-                tf.reduce_sum(masks),
+                tf.reduce_sum(tf.multiply(unmasked_eval_losses, eval_masks)),
+                tf.reduce_sum(eval_masks),
                 name='loss'
             )
 
-            # Placeholders for evaluation summaries.
-            input_image_ids = tf.placeholder(
-                dtype=tf.string,
-                name='input_image_ids',
-            )
-            target_sentences = tf.placeholder(
-                dtype=tf.string,
-                name='target_sentences',
-            )
-            output_sentences = tf.placeholder(
-                dtype=tf.string,
-                name='output_sentences',
-            )
-            eval_total_loss = tf.placeholder(
-                dtype=tf.int32,
-                name='total_loss',
-            )
+#            # Placeholders for evaluation summaries.
+#            input_image_ids = tf.placeholder(
+#                dtype=tf.string,
+#                name='input_image_ids',
+#            )
+#            target_sentences = tf.placeholder(
+#                dtype=tf.string,
+#                name='target_sentences',
+#            )
+#            output_sentences = tf.placeholder(
+#                dtype=tf.string,
+#                name='output_sentences',
+#            )
+#            eval_total_loss = tf.placeholder(
+#                dtype=tf.float32,
+#                name='total_loss',
+#            )
 
     def _build_convnet(self, input_images, reuse=None, scope=None):
         minibatch_size = self._config['minibatch_size']
@@ -594,17 +593,17 @@ class Image2Text:
             self._data_queue.put(data[i])
             i += 1
 
-    def _get_preprocessed_input(self, img_id, caption_id):
+    def _get_preprocessed_input(self, dataset, img_id, caption_id):
         convnet_name = self._config['convnet']['name']
         input_image_size = self._config['input_image_shape'][0]
         # TODO: Use TensorFlow for image resizing/crop.
         image_array = preprocess_image(
             convnet_name=convnet_name,
-            image=self._dataset.get_image(img_id),
+            image=dataset.get_image(img_id),
             size=input_image_size,
         )
 
-        caption = self._dataset.get_captions(img_id)[caption_id]
+        caption = dataset.get_captions(img_id)[caption_id]
         caption_sequence = self._vocabulary.get_preprocessed_sentence(
             caption,
         )
@@ -618,7 +617,7 @@ class Image2Text:
     def _input_queue_enqueue_thread(self):
 #        input_image_size = self._config['input_image_shape'][0]
 #        convnet_name = self._config['convnet']['name']
-        dataset = self._dataset
+        dataset = self._training_dataset
 
         enqueue_op = self._tf_graph.get_operation_by_name(
             'input_queue/enqueue_op'
@@ -657,7 +656,7 @@ class Image2Text:
 #                    dtype=np.int32,
 #                )
                 rv = self._get_preprocessed_input(
-                    img_id, caption_id,
+                    self._training_dataset, img_id, caption_id,
                 )
                 image_array, caption_seq, mask_array = rv
                 self._tf_session.run(
@@ -700,30 +699,50 @@ class Image2Text:
             )
 
         with tf.variable_scope('eval'):
+            input_image_ids = tf.placeholder(
+                dtype=tf.string,
+                name='input_image_ids',
+            )
+            target_sentences = tf.placeholder(
+                dtype=tf.string,
+                name='target_sentences',
+            )
+            output_sentences = tf.placeholder(
+                dtype=tf.string,
+                name='output_sentences',
+            )
+            eval_total_loss = tf.placeholder(
+                dtype=tf.float32,
+                name='total_loss',
+            )
             eval_summaries = [
                 tf.summary.text(
                     name='input_image_ids',
-                    tensor=self._tf_graph.get_tensor_by_name(
-                        'eval/input_image_ids:0'
-                    ),
+                    tensor=input_image_ids,
+#                    tensor=self._tf_graph.get_tensor_by_name(
+#                        'eval/input_image_ids:0'
+#                    ),
                 ),
                 tf.summary.text(
                     name='target_sentences',
-                    tensor=self._tf_graph.get_tensor_by_name(
-                        'eval/target_sentences:0'
-                    ),
+                    tensor=target_sentences,
+#                    tensor=self._tf_graph.get_tensor_by_name(
+#                        'eval/target_sentences:0'
+#                    ),
                 ),
                 tf.summary.text(
                     name='output_sentences',
-                    tensor=self._tf_graph.get_tensor_by_name(
-                        'eval/output_sentences:0'
-                    ),
+                    tensor=output_sentences,
+#                    tensor=self._tf_graph.get_tensor_by_name(
+#                        'eval/output_sentences:0'
+#                    ),
                 ),
                 tf.summary.scalar(
                     name='total_loss',
-                    tensor=self._tf_graph.get_tensor_by_name(
-                        'eval/total_loss:0'
-                    ),
+                    tensor=eval_total_loss,
+#                    tensor=self._tf_graph.get_tensor_by_name(
+#                        'eval/total_loss:0'
+#                    ),
                 )
             ]
             eval_summary_op = tf.summary.merge(
@@ -807,6 +826,8 @@ class Image2Text:
 
         fetch_dict = {}
         for var_name in [
+            'output_seqs',
+            'train/unmasked_losses/unmasked_losses',
             'train/minibatch_loss',
             'convnet/image_embedding/image_embeddings',
             'convnet/predictions',
@@ -863,7 +884,7 @@ class Image2Text:
                         ),
                     )
                     predictions = np.reshape(
-                        rd['convnet/predictions'],
+                        rd['convnet/predictions'][:,-1000:],
                         (minibatch_size, 1000),
                     )
                     print('Image predictions')
@@ -880,7 +901,7 @@ class Image2Text:
                     print('output: {}'.format(output_sentence))
                     print('\n')
 
-                    self.evaluate_validation()
+                    rd = self.evaluate_validation()
                     summary_writer.add_summary(
                         summary=rd['summary/eval/merged/merged'],
                         global_step=self._step,
@@ -1023,22 +1044,24 @@ class Image2Text:
             shape=(minibatch_size, *input_image_shape),
             dtype=np.float32,
         )
-        targets = np.empty(
+        targets = np.zeros(
             shape=(minibatch_size, max_sequence_length),
             dtype=np.int32,
         )
-        masks = np.empty(
+        masks = np.zeros(
             shape=(minibatch_size, max_sequence_length),
             dtype=np.int32,
         )
-        for i, img_id, caption_id in enumerate(data):
+        for i, (img_id, caption_id) in enumerate(data):
             img_ids.append(img_id)
             image_array, target_seq, mask = self._get_preprocessed_input(
-                img_id, caption_id,
+                self._validation_dataset, img_id, caption_id,
             )
             images_array[i] = image_array
-            targets[i] = target_seq[:max_sequence_length]
-            masks[i] = mask[:max_sequence_length]
+            target_seq = target_seq[:max_sequence_length]
+            targets[i,:len(target_seq)] = target_seq
+            mask = mask[:max_sequence_length]
+            masks[i,:len(mask)] = mask
             target_sentences.append(
                 self._validation_dataset.get_captions(img_id)[caption_id]
             )
@@ -1057,14 +1080,17 @@ class Image2Text:
         feed_dict = {
             # TODO: Display images instead of their ids.
             self._tf_graph.get_tensor_by_name(
-                'eval/input_image_ids:0'
+                'summary/eval/input_image_ids:0'
             ) : img_ids,
             self._tf_graph.get_tensor_by_name(
-                'eval/target_sentences:0'
+                'summary/eval/target_sentences:0'
             ) : target_sentences,
             self._tf_graph.get_tensor_by_name(
-                'eval/output_sentences:0'
+                'summary/eval/output_sentences:0'
             ) : output_sentences,
+            self._tf_graph.get_tensor_by_name(
+                'summary/eval/total_loss:0'
+            ) : rd['total_loss'],
         }
         rd = self._tf_session.run(
             fetches=fetch_dict,
