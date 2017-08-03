@@ -15,6 +15,7 @@ def build_inception(
     tf_session,
     tf_graph,
     pretrained_model_file_path='pretrained/inception_v4.ckpt',
+    reuse=False,
     scope=None,
 ):
     if name == 'inception_v3':
@@ -26,20 +27,23 @@ def build_inception(
             input_layer,
             create_aux_logits=False,
             is_training=False,
+            reuse=reuse,
         )
-    var_dict = {}
-    for var in tf_graph.get_collection('variables', scope=scope.name):
-        var_name_prefix = '{}/'.format(scope.name)
-        var_name_suffix = ':0'
-        saved_var_name = var.name[len(var_name_prefix):-len(var_name_suffix)]
-        var_dict[saved_var_name] = var
-    saver = tf.train.Saver(
-        var_list=var_dict,
-    )
-    saver.restore(
-        tf_session,
-        save_path=pretrained_model_file_path,
-    )
+    if not reuse:
+        var_dict = {}
+        for var in tf_graph.get_collection('variables', scope=scope.name):
+            var_name_prefix = '{}/'.format(scope.name)
+            var_name_suffix = ':0'
+            saved_var_name = var.name[len(var_name_prefix)
+                                      :-len(var_name_suffix)]
+            var_dict[saved_var_name] = var
+        saver = tf.train.Saver(
+            var_list=var_dict,
+        )
+        saver.restore(
+            tf_session,
+            save_path=pretrained_model_file_path,
+        )
 
     return endpoints
 

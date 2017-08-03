@@ -82,15 +82,19 @@ class Image2Text:
         with self._tf_graph.as_default():
             self._tf_session = tf.Session(config=self._tf_config)
 
-            if self._training:
-                with tf.variable_scope('input_queue'):
-                    self._build_input_queue()
+#            if self._training:
+#                with tf.variable_scope('input_queue'):
+#                    self._build_input_queue()
+            with tf.variable_scope('input_queue'):
+                self._build_input_queue()
 
-            self._build_network(tf_session=self._tf_session)
+            self._build_network()
 
-            if self._training:
-                with tf.variable_scope('summary'):
-                    self._build_summary_ops()
+#            if self._training:
+#                with tf.variable_scope('summary'):
+#                    self._build_summary_ops()
+            with tf.variable_scope('summary'):
+                self._build_summary_ops()
 
             self._tf_session.run(tf.global_variables_initializer())
 
@@ -194,8 +198,8 @@ class Image2Text:
     def _build_network(self):
         minibatch_size = self._config['minibatch_size']
         input_image_shape = self._config['input_image_shape']
-        vocabulary_size = self._config['vocabulary_size']
         embedding_size = self._config['embedding_size']
+        vocabulary_size = self._vocabulary.get_size() 
 
         # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
         # inference runs for a single RNN cell pass.
@@ -232,6 +236,7 @@ class Image2Text:
             scope.reuse_variables()
             inference_image_embeddings = self._build_convnet(
                 inference_input_images,
+                reuse=True,
                 scope=scope,
             )
 
@@ -286,31 +291,42 @@ class Image2Text:
             else:
                 raise ValueError
 
-            with tf.variable_scope('lstm_cell') as scope:
+#            with tf.variable_scope('lstm_cell') as scope:
+            with tf.variable_scope('cell') as scope:
                 rnn_cell = tf_lstm_cell(**lstm_kwargs)
-                if self._training:
-                    keep_prob = cfg_rnn_cell['dropout_keep_probability']
-                    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
-                        rnn_cell,
-                        input_keep_prob=keep_prob,
-                        output_keep_prob=keep_prob,
-                        state_keep_prob=1.0,
-                        variational_recurrent=False,
-                    )
+#                if self._training:
+#                    keep_prob = cfg_rnn_cell['dropout_keep_probability']
+#                    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
+#                        rnn_cell,
+#                        input_keep_prob=keep_prob,
+#                        output_keep_prob=keep_prob,
+#                        state_keep_prob=1.0,
+#                        variational_recurrent=False,
+#                    )
+
+                # Training.
+                keep_prob = cfg_rnn_cell['dropout_keep_probability']
+                dropout_rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
+                    rnn_cell,
+                    input_keep_prob=keep_prob,
+                    output_keep_prob=keep_prob,
+                    state_keep_prob=1.0,
+                    variational_recurrent=False,
+                )
+
                 rnn_zero_states = rnn_cell.zero_state(
                     batch_size=minibatch_size,
                     dtype=tf.float32,
                 )
-                _, rnn_initial_states = rnn_cell(
+                _, rnn_initial_states = dropout_rnn_cell(
                     image_embeddings,
                     rnn_zero_states,
                 )
 
                 scope.reuse_variables()
 
-                # Training.
                 rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
-                    cell=rnn_cell,
+                    cell=dropout_rnn_cell,
                     inputs=input_embeddings,
                     sequence_length = tf.reduce_sum(masks, axis=1),
                     initial_state=rnn_initial_states,
@@ -319,6 +335,15 @@ class Image2Text:
                 )
 
                 # Inference.
+                inference_rnn_zero_states = rnn_cell.zero_state(
+                    batch_size=minibatch_size,
+                    dtype=tf.float32,
+                )
+                _, inference_rnn_initial_states = rnn_cell(
+                    image_embeddings,
+                    inference_rnn_zero_states,
+                )
+
                 inference_rnn_outputs, inference_new_rnn_states = rnn_cell(
                     inference_input_embeddings,
                     inference_prev_rnn_states,
@@ -337,7 +362,7 @@ class Image2Text:
 
             #Inference.
             tf.concat(
-                rnn_initial_states,
+                inference_rnn_initial_states,
                 axis=1,
                 name='inference_initial_states',
             )
@@ -486,7 +511,7 @@ class Image2Text:
                 name='total_loss',
             )
 
-    def _build_convnet(self, input_images, scope=None):
+    def _build_convnet(self, input_images, reuse=None, scope=None):
         minibatch_size = self._config['minibatch_size']
         embedding_size = self._config['embedding_size']
         convnet_cfg = self._config['convnet']
@@ -508,7 +533,7 @@ class Image2Text:
                 ),
                 name='predictions',
             )
-        elif name[len('inception'):] == 'inception':
+        elif name[:len('inception')] == 'inception':
             endpoints = build_inception(
                 name,
                 input_images,
@@ -516,6 +541,7 @@ class Image2Text:
                 tf_session=self._tf_session,
                 tf_graph=self._tf_graph,
                 pretrained_model_file_path=pretrained_model_file_path,
+                reuse=reuse,
                 scope=scope,
             )
             convnet_features = tf.squeeze(
@@ -734,8 +760,8 @@ class Image2Text:
         minibatch_size = self._config['minibatch_size']
         num_steps_per_epoch = (num_examples_per_epoch / minibatch_size)
 
-        if not self._training:
-            raise RuntimeError
+#        if not self._training:
+#            raise RuntimeError
 
         if run_name is None:
             run_name = (
