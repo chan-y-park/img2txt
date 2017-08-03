@@ -1,10 +1,8 @@
 #from dataset_config import pascal
 
 img2txt_using_lstm = {
-#    'dataset': pascal,
     'minibatch_size': 32,
-    'input_image_shape': [224, 224, 3],
-#    'vocabulary_size': None,
+#    'input_image_shape': [224, 224, 3],
     'embedding_size': 256,
     'max_sequence_length': 20,
     'rnn_cell': {
@@ -29,6 +27,7 @@ img2txt_using_lstm = {
         'name': 'inception_v3',
         'train_dataset': 'imagenet',
         'pretrained_model_file_path': 'pretrained/inception_v3.ckpt',
+        'input_image_shape': [299, 299, 3],
     },
 #    'convnet': {
 #        'name': 'inception_v4',
@@ -39,6 +38,7 @@ img2txt_using_lstm = {
 #        'name': 'vgg16',
 #        'train_dataset': 'imagenet',
 #        'pretrained_model_file_path': 'pretrained/vgg16_weights.h5',
+#        'input_image_shape': [224, 224, 3],
 #    },
     'num_examples_per_epoch': None,
     'num_training_epochs': 15,

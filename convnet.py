@@ -14,7 +14,7 @@ def build_inception(
     minibatch_size,
     tf_session,
     tf_graph,
-    pretrained_model_file_path='pretrained/inception_v4.ckpt',
+    pretrained_model_file_path=None,
     reuse=False,
     scope=None,
 ):
@@ -201,7 +201,15 @@ def get_vgg16_weights(weights_f, block_layer_name, var_name, var_shape):
 
 def preprocess_image(convnet_name, image, size):
     # TODO: Center-crop and resize.
+    width, height = image.size
+    min_size = min(width, height)
+    left = int((width - min_size) / 2.0)
+    upper = int((height - min_size) / 2.0)
+
+    image = image.crop((left, upper, left + min_size, upper + min_size))
+
     image = image.resize((size, size))
+
     x = np.array(image, dtype=np.float32)
     if len(x.shape) == 2:
         raise NotImplementedError
@@ -215,8 +223,8 @@ def preprocess_image(convnet_name, image, size):
         x[:, :, 1] -= 116.779
         x[:, :, 2] -= 123.68
     elif convnet_name[:len('inception')] == 'inception':
-        x /= (np.iinfo(np.uint8).max / 2)
-        x -= 1
+        x /= (np.iinfo(np.uint8).max / 2.0)
+        x -= 1.0
     else:
         raise NotImplementedError
 

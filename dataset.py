@@ -288,5 +288,5 @@ class Vocabulary:
                 word = self.get_word_of_id(word_id)
                 words.append(word)
             
-        sentence = ' '.join(words) + '.'
+        sentence = ' '.join(words)
         return sentence

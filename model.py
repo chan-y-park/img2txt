@@ -66,7 +66,6 @@ class Image2Text:
         minibatch_size = self._config['minibatch_size']
         data_queue_size = 4 * minibatch_size * NUM_ENQUEUE_THREADS
         self._data_queue = queue.Queue(maxsize=data_queue_size)
-#        self._load_dataset()
 
         self._tf_session = None
         self._tf_coordinator = None 
@@ -82,21 +81,21 @@ class Image2Text:
         with self._tf_graph.as_default():
             self._tf_session = tf.Session(config=self._tf_config)
 
-#            if self._training:
-#                with tf.variable_scope('input_queue'):
-#                    self._build_input_queue()
             with tf.variable_scope('input_queue'):
                 self._build_input_queue()
 
-            self._build_network()
+#            self._build_network()
+            self._build_network(use_input_queue=False)
 
-#            if self._training:
-#                with tf.variable_scope('summary'):
-#                    self._build_summary_ops()
             with tf.variable_scope('summary'):
                 self._build_summary_ops()
 
-            self._tf_session.run(tf.global_variables_initializer())
+            init_var_list = []
+            for var in self._tf_graph.get_collection('variables'):
+                if 'Inception' not in var.name:
+                    init_var_list.append(var)
+
+            self._tf_session.run(tf.variables_initializer(init_var_list))
 
             # List of variables to save and restore using tf.train.Saver.
             self._saver_var_list = self._tf_graph.get_collection(
@@ -108,41 +107,9 @@ class Image2Text:
             if save_path is not None:
                 self._tf_saver.restore(self._tf_session, save_path)
 
-#    def _load_dataset(self):
-#        minibatch_size = self._config['minibatch_size']
-#        cfg_dataset = self._config['dataset']
-#        dataset_name = cfg_dataset['name']
-#        # TODO: Use a TF queue.
-#        data_queue_size = 4 * minibatch_size * NUM_ENQUEUE_THREADS
-#        self._data_queue = queue.Queue(maxsize=data_queue_size)
-#
-#        if dataset_name == 'pascal':
-#            dataset = PASCAL(
-#                caption_filename=cfg_dataset['caption_filename'],
-#                data_dir=cfg_dataset['data_dir'],
-#            )
-#        elif dataset_name == 'flickr_8k':
-#            dataset = Flickr(
-#                caption_filename=cfg_dataset['caption_filename'],
-#                data_dir=cfg_dataset['data_dir'],
-#            )
-#        else:
-#            raise ValueError('Unknown dataset name: {}.'.format(dataset_name))
-#
-#        # XXX: Move to dataset API
-#        self._config['vocabulary_size'] = dataset.get_vocabulary_size()
-#        for img_id in dataset._img_ids:
-#            captions = dataset.get_captions(img_id)
-#            for caption_id in range(len(captions)):
-#                self._data_queue.append(
-#                    (img_id, caption_id)
-#                )
-#        self._dataset = dataset
-#        self._config['num_examples_per_epoch'] = len(self._data_queue)
-
     def _build_input_queue(self):
         minibatch_size = self._config['minibatch_size']
-        input_image_shape = self._config['input_image_shape']
+        input_image_shape = self._config['convnet']['input_image_shape']
 
         image = tf.placeholder(
             dtype=tf.float32,
@@ -195,51 +162,109 @@ class Image2Text:
             name='size',
         )
 
-    def _build_network(self):
+    def _build_network(
+        self,
+        use_input_queue=True,
+        with_inference=True,
+    ):
         minibatch_size = self._config['minibatch_size']
-        input_image_shape = self._config['input_image_shape']
+        input_image_shape = self._config['convnet']['input_image_shape']
         embedding_size = self._config['embedding_size']
         vocabulary_size = self._vocabulary.get_size() 
 
         # NOTE: Training runs for an unrolled RNN via tf.nn.dynamic_rnn,
         # inference runs for a single RNN cell pass.
 
-        # Training.
-        # NOTE: When using PaddedFIFOQueue, all captions are padded
-        # to the same maximum sequence length.
-        images, input_seqs, target_seqs, masks = [
-            self._tf_graph.get_tensor_by_name(
-                'input_queue/dequeued_inputs:{}'.format(i),
-            ) for i in range(4)
-        ]
+        if use_input_queue:
+            # NOTE: When using PaddedFIFOQueue, all captions are padded
+            # to the same maximum sequence length.
+            images, input_seqs, target_seqs, masks = [
+                self._tf_graph.get_tensor_by_name(
+                    'input_queue/dequeued_inputs:{}'.format(i),
+                ) for i in range(4)
+            ]
+        else:
+            max_sequence_length = self._config['max_sequence_length']
+            
+            images = tf.placeholder(
+                dtype=tf.float32,
+                shape=[minibatch_size] + input_image_shape,
+                name='training_images'
+            )
+            input_seqs = tf.placeholder(
+                dtype=tf.int32,
+                shape=[minibatch_size, max_sequence_length],
+                name='training_input_seqs'
+            )
+            target_seqs = tf.placeholder(
+                dtype=tf.int32,
+                shape=[minibatch_size, max_sequence_length],
+                name='training_target_seqs'
+            )
+            masks = tf.placeholder(
+                dtype=tf.int32,
+                shape=[minibatch_size, max_sequence_length],
+                name='training_masks'
+            )
 
-        # Inference.
-        inference_input_images = tf.placeholder(
-            dtype=tf.float32,
-            shape=([minibatch_size] + input_image_shape),
-            name='inference_input_images',
-        )
-        inference_inputs = tf.placeholder(
-            dtype=tf.int32,
-            shape=[minibatch_size, 1],
-            name='inference_inputs',
-        )
+        if with_inference:
+            inference_input_images = tf.placeholder(
+                dtype=tf.float32,
+                shape=([minibatch_size] + input_image_shape),
+                name='inference_input_images',
+            )
+            inference_inputs = tf.placeholder(
+                dtype=tf.int32,
+                shape=[minibatch_size, 1],
+                name='inference_inputs',
+            )
 
         with tf.variable_scope('convnet') as scope:
-            # Training.
-            image_embeddings = self._build_convnet(
+            convnet_features, predictions = self._build_convnet(
                 images,
                 scope=scope,
             )
-
-            # Inference.
-            scope.reuse_variables()
-            inference_image_embeddings = self._build_convnet(
-                inference_input_images,
-                reuse=True,
-                scope=scope,
+            tf.identity(
+                predictions,
+                name='training_predictions',
             )
+            if with_inference:
+                scope.reuse_variables()
+                (inference_convnet_features,
+                 inference_predictions) = self._build_convnet(
+                    inference_input_images,
+                    reuse=True,
+                    scope=scope,
+                )
+                tf.identity(
+                    inference_predictions,
+                    name='inference_predictions',
+                )
 
+        with tf.variable_scope('image_embedding') as scope:
+            _, convnet_output_size = convnet_features.shape.as_list()
+            W = tf.get_variable(
+                name='W',
+                shape=(convnet_output_size, embedding_size),
+                initializer=self._get_variable_initializer(),
+            )
+            b = tf.get_variable(
+                name='b',
+                shape=(embedding_size),
+                initializer=self._get_variable_initializer(),
+            )
+            image_embeddings = tf.add(
+                tf.matmul(convnet_features, W),
+                b,
+                name='image_embeddings',
+            )
+            if with_inference:
+                inference_image_embeddings = tf.add(
+                    tf.matmul(inference_convnet_features, W),
+                    b,
+                    name='inference_image_embeddings',
+                )
+            
         with tf.variable_scope('rnn'):
             word_embedding = tf.get_variable(
                 name='word_embedding',
@@ -247,32 +272,31 @@ class Image2Text:
                 initializer=self._get_variable_initializer(),
             )
 
-            # Training.
             input_embeddings = tf.nn.embedding_lookup(
                 word_embedding,
                 input_seqs,
             )
 
-            # Inference.
-            inference_input_embeddings = tf.nn.embedding_lookup(
-                word_embedding,
-                inference_inputs,
-            )
-            inference_input_embeddings = tf.squeeze(
-                inference_input_embeddings,
-                axis=1,
-            )
-            inference_prev_rnn_states = tf.placeholder(
-                dtype=tf.float32,
-                shape=[minibatch_size,
-                       (2 * self._config['rnn_cell']['num_units'])],
-                name='inference_prev_states',
-            )
-            inference_prev_rnn_states = tf.split(
-                inference_prev_rnn_states,
-                num_or_size_splits=2,
-                axis=1,
-            )
+            if with_inference:
+                inference_input_embeddings = tf.nn.embedding_lookup(
+                    word_embedding,
+                    inference_inputs,
+                )
+                inference_input_embeddings = tf.squeeze(
+                    inference_input_embeddings,
+                    axis=1,
+                )
+                inference_prev_rnn_states = tf.placeholder(
+                    dtype=tf.float32,
+                    shape=[minibatch_size,
+                           (2 * self._config['rnn_cell']['num_units'])],
+                    name='inference_prev_states',
+                )
+                inference_prev_rnn_states = tf.split(
+                    inference_prev_rnn_states,
+                    num_or_size_splits=2,
+                    axis=1,
+                )
 
             # TODO: Use DNC instead of LSTM.
             cfg_rnn_cell = self._config['rnn_cell']
@@ -290,20 +314,9 @@ class Image2Text:
             else:
                 raise ValueError
 
-#            with tf.variable_scope('lstm_cell') as scope:
             with tf.variable_scope('cell') as scope:
                 rnn_cell = tf_lstm_cell(**lstm_kwargs)
-#                if self._training:
-#                    keep_prob = cfg_rnn_cell['dropout_keep_probability']
-#                    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
-#                        rnn_cell,
-#                        input_keep_prob=keep_prob,
-#                        output_keep_prob=keep_prob,
-#                        state_keep_prob=1.0,
-#                        variational_recurrent=False,
-#                    )
-
-                # Training.
+                # Training uses dropout in RNN.
                 keep_prob = cfg_rnn_cell['dropout_keep_probability']
                 dropout_rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
                     rnn_cell,
@@ -327,26 +340,27 @@ class Image2Text:
                 rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
                     cell=dropout_rnn_cell,
                     inputs=input_embeddings,
-                    sequence_length = tf.reduce_sum(masks, axis=1),
+                    sequence_length=tf.reduce_sum(masks, axis=1),
                     initial_state=rnn_initial_states,
                     dtype=tf.float32,
                     scope=scope,
                 )
 
-                # Inference.
-                inference_rnn_zero_states = rnn_cell.zero_state(
-                    batch_size=minibatch_size,
-                    dtype=tf.float32,
-                )
-                _, inference_rnn_initial_states = rnn_cell(
-                    image_embeddings,
-                    inference_rnn_zero_states,
-                )
+                if with_inference:
+                    inference_rnn_zero_states = rnn_cell.zero_state(
+                        batch_size=minibatch_size,
+                        dtype=tf.float32,
+                    )
+                    _, inference_rnn_initial_states = rnn_cell(
+                        inference_image_embeddings,
+                        inference_rnn_zero_states,
+                    )
 
-                inference_rnn_outputs, inference_new_rnn_states = rnn_cell(
-                    inference_input_embeddings,
-                    inference_prev_rnn_states,
-                )
+                    inference_rnn_outputs, inference_new_rnn_states = rnn_cell(
+                        inference_input_embeddings,
+                        inference_prev_rnn_states,
+                    )
+                # End of cell scope.
 
             # Training.
             tf.identity(
@@ -359,17 +373,17 @@ class Image2Text:
                 name='reshaped_rnn_output',
             )
 
-            #Inference.
-            tf.concat(
-                inference_rnn_initial_states,
-                axis=1,
-                name='inference_initial_states',
-            )
-            tf.concat(
-                inference_new_rnn_states,
-                axis=1,
-                name='inference_new_states',
-            )
+            if with_inference:
+                tf.concat(
+                    inference_rnn_initial_states,
+                    axis=1,
+                    name='inference_initial_states',
+                )
+                tf.concat(
+                    inference_new_rnn_states,
+                    axis=1,
+                    name='inference_new_states',
+                )
 
             with tf.variable_scope('fc'):
                 W = tf.get_variable(
@@ -395,21 +409,24 @@ class Image2Text:
                     #name='predictions',
                 )
 
-                # Inference.
-                inference_word_log_probabilities = tf.add(
-                    tf.matmul(inference_rnn_outputs, W),
-                    b,
-                    name='inference_word_log_probabilities',
-                )
-                inference_word_probabilities = tf.nn.softmax(
-                    inference_word_log_probabilities,
-                    name='inference_word_probabilities',
-                )
-                inference_word_logits, inference_word_ids = tf.nn.top_k(
-                    inference_word_log_probabilities,
-                    k=1,
-                    name='inference_predictions',
-                )
+                if with_inference:
+                    inference_word_log_probabilities = tf.add(
+                        tf.matmul(inference_rnn_outputs, W),
+                        b,
+                        name='inference_word_log_probabilities',
+                    )
+                    inference_word_probabilities = tf.nn.softmax(
+                        inference_word_log_probabilities,
+                        name='inference_word_probabilities',
+                    )
+                    inference_word_logits, inference_word_ids = tf.nn.top_k(
+                        inference_word_log_probabilities,
+                        k=1,
+                        name='inference_predictions',
+                    )
+            # End of fc scope.
+
+        # End of rnn scope.
 
         # Training.
         output_seqs = tf.reshape(
@@ -418,12 +435,12 @@ class Image2Text:
             name='output_seqs'
         )
 
-        # Inference.
-        inference_outputs = tf.reshape(
-            inference_word_ids,
-            shape=[minibatch_size, -1],
-            name='inference_outputs'
-        )
+        if with_inference:
+            inference_outputs = tf.reshape(
+                inference_word_ids,
+                shape=[minibatch_size, -1],
+                name='inference_outputs'
+            )
 
         loss_function = tf.nn.sparse_softmax_cross_entropy_with_logits
         with tf.variable_scope('train'):
@@ -447,12 +464,16 @@ class Image2Text:
                 tf.reduce_sum(masks),
                 name='minibatch_loss'
             )
-#            tf.losses.add_loss(minibatch_loss)
 
             optimizer = tf.train.GradientDescentOptimizer(
                 learning_rate=lr,
             )
+            train_var_list = []
+            for var in self._tf_graph.get_collection('trainable_variables'):
+                if 'convnet' not in var.name:
+                    train_var_list.append(var)
             grads_and_vars = optimizer.compute_gradients(
+                var_list=train_var_list,
                 loss=minibatch_loss,
             )
             gradients, variables = zip(*grads_and_vars)
@@ -468,47 +489,35 @@ class Image2Text:
                 name='minimize_loss',
             )
 
-        with tf.variable_scope('eval'):
-            eval_targets = tf.placeholder(
-                dtype=tf.int32,
-                shape=[minibatch_size],
-                name='targets',
-            )
-#            eval_masks = tf.placeholder(
-#                dtype=tf.int32,
-#                shape=[minibatch_size],
-#                name='masks',
-#            )
-            unmasked_eval_losses = loss_function(
-                labels=eval_targets,
-                logits=inference_word_log_probabilities,
-                name='unmasked_losses',
-            )
-
-#            eval_masks = tf.to_float(eval_masks)
-#            eval_loss = tf.div(
-#                tf.reduce_sum(tf.multiply(unmasked_eval_losses, eval_masks)),
-#                tf.reduce_sum(eval_masks),
-#                name='loss'
-#            )
-
-            # Placeholders for evaluation summaries.
-            input_image_ids = tf.placeholder(
-                dtype=tf.string,
-                name='input_image_ids',
-            )
-            target_sentences = tf.placeholder(
-                dtype=tf.string,
-                name='target_sentences',
-            )
-            output_sentences = tf.placeholder(
-                dtype=tf.string,
-                name='output_sentences',
-            )
-            eval_minibatch_loss = tf.placeholder(
-                dtype=tf.float32,
-                name='minibatch_loss',
-            )
+        if with_inference:
+            with tf.variable_scope('eval'):
+                eval_targets = tf.placeholder(
+                    dtype=tf.int32,
+                    shape=[minibatch_size],
+                    name='targets',
+                )
+                unmasked_eval_losses = loss_function(
+                    labels=eval_targets,
+                    logits=inference_word_log_probabilities,
+                    name='unmasked_losses',
+                )
+                # Placeholders for evaluation summaries.
+                input_image_ids = tf.placeholder(
+                    dtype=tf.string,
+                    name='input_image_ids',
+                )
+                target_sentences = tf.placeholder(
+                    dtype=tf.string,
+                    name='target_sentences',
+                )
+                output_sentences = tf.placeholder(
+                    dtype=tf.string,
+                    name='output_sentences',
+                )
+                eval_minibatch_loss = tf.placeholder(
+                    dtype=tf.float32,
+                    name='minibatch_loss',
+                )
 
     def _build_convnet(self, input_images, reuse=None, scope=None):
         minibatch_size = self._config['minibatch_size']
@@ -518,20 +527,18 @@ class Image2Text:
         pretrained_model_file_path = convnet_cfg['pretrained_model_file_path']
 
         if name == 'vgg16':
-            build_vgg16(
-                input_images,
-                minibatch_size,
-                pretrained_model_file_path=pretrained_model_file_path,
-            )
-            convnet_features = self._tf_graph.get_tensor_by_name(
-                'convnet/top/fc2/activation:0',
-            )
-            predictions = tf.identity(
-                self._tf_graph.get_tensor_by_name(
-                    'convnet/top/predictions/activation:0',
-                ),
-                name='predictions',
-            )
+            with tf.variable_scope('vgg16'):
+                build_vgg16(
+                    input_images,
+                    minibatch_size,
+                    pretrained_model_file_path=pretrained_model_file_path,
+                )
+                convnet_features = self._tf_graph.get_tensor_by_name(
+                    'convnet/vgg16/top/fc2/activation:0',
+                )
+                predictions = self._tf_graph.get_tensor_by_name(
+                    'convnet/vgg16/top/predictions/activation:0',
+                )
         elif name[:len('inception')] == 'inception':
             endpoints = build_inception(
                 name,
@@ -548,32 +555,11 @@ class Image2Text:
                 axis=[1, 2],
                 name='features',
             )
-            predictions = tf.identity(
-                endpoints['Predictions'],
-                name='predictions',
-            )
+            predictions = endpoints['Predictions']
         else:
             raise NotImplementedError
 
-        _, convnet_output_size = convnet_features.shape.as_list()
-        with tf.variable_scope('image_embedding'):
-            W = tf.get_variable(
-                name='W',
-                shape=(convnet_output_size, embedding_size),
-                initializer=self._get_variable_initializer(),
-            )
-            b = tf.get_variable(
-                name='b',
-                shape=(embedding_size),
-                initializer=self._get_variable_initializer(),
-            )
-            image_embeddings = tf.add(
-                tf.matmul(convnet_features, W),
-                b,
-                name='image_embeddings',
-            )
-
-        return image_embeddings
+        return convnet_features, predictions
 
     def _get_variable_initializer(self):
         return tf.truncated_normal_initializer(
@@ -596,31 +582,26 @@ class Image2Text:
                continue 
             i += 1
 
-    def _get_preprocessed_input(self, dataset, img_id, caption_id):
+    def _get_preprocessed_input(self, image, caption):
         convnet_name = self._config['convnet']['name']
-        input_image_size = self._config['input_image_shape'][0]
+        input_image_size = self._config['convnet']['input_image_shape'][0]
         # TODO: Use TensorFlow for image resizing/crop.
         image_array = preprocess_image(
             convnet_name=convnet_name,
-            image=dataset.get_image(img_id),
+            image=image,
             size=input_image_size,
         )
 
-        caption = dataset.get_captions(img_id)[caption_id]
         caption_sequence = self._vocabulary.get_preprocessed_sentence(
             caption,
         )
-#        caption_sequence_length = len(caption_sequence) - 1
-#        mask = np.ones(
-#            caption_sequence_length,
-#            dtype=np.int32,
-#        )
-#        return (image_array, caption_sequence, mask)
-        return (image_array, caption_sequence)
+        mask = np.ones(
+            (len(caption_sequence) - 1),
+            dtype=np.int32,
+        )
+        return (image_array, caption_sequence, mask)
 
     def _input_queue_enqueue_thread(self):
-#        input_image_size = self._config['input_image_shape'][0]
-#        convnet_name = self._config['convnet']['name']
         dataset = self._training_dataset
 
         enqueue_op = self._tf_graph.get_operation_by_name(
@@ -643,30 +624,13 @@ class Image2Text:
             data_to_enqueue = self._data_queue.get() 
             try:
                 img_id, caption_id = data_to_enqueue
-                # TODO: Use TensorFlow for image resizing/crop.
-#                image_array = preprocess_image(
-#                    convnet_name=convnet_name,
-#                    image=dataset.get_image(img_id),
-#                    size=input_image_size,
-#                )
-#
-#                raw_caption = self._dataset.get_captions(img_id)[caption_id]
-#                caption = self._vocabulary.get_preprocessed_sentence(
-#                    raw_caption,
-#                )
-#                input_sequence_length = len(caption) - 1
-#                mask_array = np.ones(
-#                    input_sequence_length,
-#                    dtype=np.int32,
-#                )
-                image_array, caption_seq = self._get_preprocessed_input(
-                    self._training_dataset, img_id, caption_id,
-                )
-                # NOTE: Discard <eos> when evaluating the training loss.
-                caption_seq_len = len(caption_seq) - 1
-                mask_array = np.ones(
-                    caption_seq_len,
-                    dtype=np.int32,
+                dataset = self._training_dataset
+                image = dataset.get_image(img_id)
+                caption = dataset.get_captions(img_id)[caption_id]
+                image_array, caption_seq, mask_array = (
+                    self._get_preprocessed_input(
+                        image, caption,
+                    )
                 )
                 self._tf_session.run(
                     enqueue_op,
@@ -700,7 +664,7 @@ class Image2Text:
                     tensor=self._tf_graph.get_tensor_by_name(
                         'input_queue/size:0'
                     ),
-                )
+                ),
             ]
             train_summary_op = tf.summary.merge(
                 train_summaries,
@@ -768,9 +732,6 @@ class Image2Text:
         minibatch_size = self._config['minibatch_size']
         num_steps_per_epoch = (num_examples_per_epoch / minibatch_size)
 
-#        if not self._training:
-#            raise RuntimeError
-
         if run_name is None:
             run_name = (
                 '{:02}{:02}_{:02}{:02}{:02}'.format(*time.localtime()[1:6])
@@ -819,7 +780,7 @@ class Image2Text:
             'train/unmasked_losses/unmasked_losses',
             'train/minibatch_loss',
             'convnet/image_embedding/image_embeddings',
-            'convnet/predictions',
+            'convnet/training_predictions',
             'output_seqs',
             'summary/train/merged/merged',
         ]:
@@ -873,7 +834,7 @@ class Image2Text:
                         ),
                     )
                     predictions = np.reshape(
-                        rd['convnet/predictions'][:,-1000:],
+                        rd['convnet/training_predictions'][:,-1000:],
                         (minibatch_size, 1000),
                     )
                     print('Image predictions')
@@ -948,9 +909,9 @@ class Image2Text:
             'rnn/inference_initial_states': self._tf_graph.get_tensor_by_name(
                 'rnn/inference_initial_states:0'
             ),
-            'convnet/predictions': (
+            'convnet/inference_predictions': (
                 self._tf_graph.get_tensor_by_name(
-                    'convnet/predictions:0'
+                    'convnet/inference_predictions:0'
                 )
             ),
         }
@@ -959,7 +920,7 @@ class Image2Text:
             feed_dict=feed_dict,
         )
 
-        convnet_predictions = rd['convnet/predictions']
+        convnet_predictions = rd['convnet/inference_predictions']
         prev_rnn_states = rd['rnn/inference_initial_states']
 
         inputs = np.array(
@@ -998,17 +959,11 @@ class Image2Text:
                 feed_dict[self._tf_graph.get_tensor_by_name(
                     'eval/targets:0'
                 )] = targets[:, t]
-#                feed_dict[self._tf_graph.get_tensor_by_name(
-#                    'eval/masks:0'
-#                )] = masks[:, t]
                 fetch_dict[
                     'eval/unmasked_losses'
                 ] = self._tf_graph.get_tensor_by_name(
                     'eval/unmasked_losses/unmasked_losses:0'
                 )
-#                fetch_dict['eval/loss'] = = self._tf_graph.get_tensor_by_name(
-#                    'eval/loss:0'
-#                )
             rd = self._tf_session.run(
                 fetches=fetch_dict,
                 feed_dict=feed_dict,
@@ -1037,13 +992,9 @@ class Image2Text:
     def evaluate_validation(self):
         minibatch_size = self._config['minibatch_size']
         convnet_name = self._config['convnet']['name']
-        input_image_shape = self._config['input_image_shape']
+        input_image_shape = self._config['convnet']['input_image_shape']
         max_sequence_length = self._config['max_sequence_length']
 
-        data = random.choices(
-            self._validation_dataset._data,
-            k=minibatch_size,
-        )
         img_ids = []
         target_sentences = []
         images_array = np.empty(
@@ -1058,28 +1009,34 @@ class Image2Text:
             shape=(minibatch_size, max_sequence_length),
             dtype=np.int32,
         )
-        for i, (img_id, caption_id) in enumerate(data):
-            img_ids.append(img_id)
-            image_array, target_seq = self._get_preprocessed_input(
-                self._validation_dataset, img_id, caption_id,
-            )
-            # NOTE: Include <eos> when evaluating the validation loss.
-            target_seq_len = len(target_seq)
-            mask = np.ones(
-                target_seq_len,
-                dtype=np.int32,
-            )
+        dataset = self._validation_dataset
+        len_data = len(dataset._data)
+        for i in range(minibatch_size):
+            finished = False
+            while not finished:
+                k = random.randrange(0, len_data)
+                img_id, caption_id = dataset._data[k]
+                image = dataset.get_image(img_id)
+                caption = dataset.get_captions(img_id)[caption_id]
+                image_array, caption_seq, mask = self._get_preprocessed_input(
+                    image, caption,
+                )
+                if (len(caption_seq) <= max_sequence_length):
+                    finished = True
             images_array[i] = image_array
-            target_seq = target_seq[:max_sequence_length]
+            target_seq = caption_seq[1:]
             targets[i,:len(target_seq)] = target_seq
-            mask = mask[:max_sequence_length]
             masks[i,:len(mask)] = mask
+
             target_sentences.append(
                 '{}: {}'.format(
                     i,
                     self._validation_dataset.get_captions(img_id)[caption_id],
                 )
             )
+            img_ids.append(img_id)
+        assert(len(img_ids) == minibatch_size)
+        assert(len(target_sentences) == minibatch_size)
 
         rd = self.get_inference(images_array, targets, masks)
         output_sentences = [
@@ -1135,6 +1092,184 @@ class Image2Text:
             raise NotImplementedError
         
         return decode_predictions(predictions)
+
+    def test_train(
+        self,
+        dataset=None,
+        max_num_steps=None,
+        verbose=False,
+    ):
+        # TODO: Turn this into a full test.
+        from PIL import Image
+        import h5py
+
+        minibatch_size = self._config['minibatch_size']
+        input_image_shape = self._config['convnet']['input_image_shape']
+        max_sequence_length = self._config['max_sequence_length']
+        convnet_name = self._config['convnet']['name']
+
+        # Preprare test inputs.
+        images_array = np.empty(
+            shape=(minibatch_size, *input_image_shape),
+            dtype=np.float32,
+        )
+        input_seqs = np.zeros(
+            shape=(minibatch_size, max_sequence_length),
+            dtype=np.int32,
+        )
+        target_seqs = np.zeros(
+            shape=(minibatch_size, max_sequence_length),
+            dtype=np.int32,
+        )
+        masks = np.zeros(
+            shape=(minibatch_size, max_sequence_length),
+            dtype=np.int32,
+        )
+
+        image = Image.open('images/dog.jpg')
+        input_sentence = 'a happy dog.'
+        image_array, caption_seq, mask = self._get_preprocessed_input(
+            image, input_sentence,
+        )
+        len_seq = len(caption_seq)
+        for i in range(minibatch_size):
+            images_array[i] = image_array
+            input_seqs[i,:len_seq - 1] = caption_seq[:-1]
+            target_seqs[i, :len_seq - 1]  = caption_seq[1:]
+            masks[i, :len_seq - 1] = [1] * (len_seq - 1)
+
+        fetch_dict = {}
+        for var_name in [
+            'output_seqs',
+            'train/unmasked_losses/unmasked_losses',
+            'train/minibatch_loss',
+            'image_embedding/image_embeddings',
+            'convnet/training_predictions',
+            'output_seqs',
+        ]:
+            fetch_dict[var_name] = self._tf_graph.get_tensor_by_name(
+                var_name + ':0'
+            )
+
+        for op_name in [
+            'train/minimize_loss',
+        ]:
+            fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
+
+        step = 0
+        while step < max_num_steps:
+            print(step)
+            rv = self._tf_session.run(
+                fetches=[self._tf_graph.get_tensor_by_name(
+                        'convnet/inference_predictions:0'
+                    )
+                ],
+                feed_dict={
+                    self._tf_graph.get_tensor_by_name(
+                        'inference_input_images:0'
+                    ): images_array
+                },
+            )
+            flattened_prediction_values = rv[0]
+            prediction_values = np.reshape(
+                    flattened_prediction_values[:,-1000:],
+                    (minibatch_size, 1000),
+                )
+            decoded_predictions = decode_predictions(
+                prediction_values
+            )
+            _, obj_name, prob = decoded_predictions[0][0]
+            assert(obj_name == 'golden_retriever')
+            
+            if verbose:
+                for _, obj, prob in decoded_predictions[0]:
+                    print('{}: {:g}'.format(obj, prob))
+
+            if convnet_name == 'vgg16':
+                block_layer_name = 'block1_conv1'
+                var_name = 'W'
+                dset_name = block_layer_name + '_' + var_name + '_1:0'
+                conv_var = self._tf_graph.get_tensor_by_name(
+                    'convnet/vgg16/block1/conv1/W:0'
+                )
+                weights_f = h5py.File(
+                    'pretrained/vgg16_weights.h5',
+                    mode='r',
+                )
+                pretrained_var_val = (
+                    weights_f
+                    [block_layer_name]
+                    [dset_name]
+                    .value
+                )
+                assert(conv_var.eval(session=self._tf_session)
+                       == pretrained_var_val)
+
+            learning_rate = 2.0
+
+            feed_dict = {
+                self._tf_graph.get_tensor_by_name(
+                    'train/learning_rate:0'
+                ): learning_rate,
+                self._tf_graph.get_tensor_by_name(
+                    'training_images:0'
+                ): images_array,
+                self._tf_graph.get_tensor_by_name(
+                    'training_input_seqs:0'
+                ): input_seqs,
+                self._tf_graph.get_tensor_by_name(
+                    'training_target_seqs:0'
+                ): target_seqs,
+                self._tf_graph.get_tensor_by_name(
+                    'training_masks:0'
+                ): masks,
+            }
+
+            rd = self._tf_session.run(
+                fetches=fetch_dict,
+                feed_dict=feed_dict,
+            )
+            predictions = rd['convnet/training_predictions'][:,-1000:]
+            decoded_predictions = decode_predictions(predictions)
+            _, obj_name, prob = decoded_predictions[0][0]
+            assert(obj_name == 'golden_retriever')
+            if verbose:
+                for _, obj, prob in decoded_predictions[0]:
+                    print('{}: {:g}'.format(obj, prob))
+
+            get_sentence = self._vocabulary.get_sentence_from_word_ids
+            output_sentence = get_sentence(rd['output_seqs'][0])
+            print('input: {}'.format(input_sentence))
+            print('output: {}'.format(output_sentence))
+            print('\n')
+
+            inference_rd = self.get_inference(
+                images_array,
+                target_seqs,
+                masks,
+            )
+
+            inference_convnet_predictions = inference_rd[
+                'convnet_predictions'
+            ][:,-1000:]
+            decoded_predictions = decode_predictions(
+                inference_convnet_predictions
+            )
+            _, obj_name, prob = decoded_predictions[0][0]
+            assert(obj_name == 'golden_retriever')
+            if verbose:
+                for _, obj, prob in decoded_predictions[0]:
+                    print('{}: {:g}'.format(obj, prob))
+
+            output_sentence = self._vocabulary.get_sentence_from_word_ids(
+                inference_rd['output_sequences'][0]
+            )
+            print('inference minibatch loss = {}'
+                  .format(inference_rd['minibatch_loss']))
+            
+            step += 1
+
+        return rd
 
 def get_step_from_checkpoint(save_path):
     return int(save_path.split('-')[-1])
