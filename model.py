@@ -800,7 +800,6 @@ class Image2Text:
             .format(max_num_steps, num_training_epochs)
         )
 
-        eval_step_interval = 100
         display_step_interval = max_num_steps // 100
         save_step_interval = max_num_steps // 10
 
@@ -865,12 +864,6 @@ class Image2Text:
                     global_step=self._step,
                 )
 
-                if self._step % eval_step_interval == 0:
-                    merged_eval_summary = self.evaluate_validation()
-                    summary_writer.add_summary(
-                        summary=merged_eval_summary,
-                        global_step=self._step,
-                    )
                 if self._step % display_step_interval == 0:
                     print(
                         '{:g}% : minibatch_loss = {:g}'
@@ -896,6 +889,12 @@ class Image2Text:
                     print('input: {}'.format(input_sentence))
                     print('output: {}'.format(output_sentence))
                     print('\n')
+
+                    merged_eval_summary = self.evaluate_validation()
+                    summary_writer.add_summary(
+                        summary=merged_eval_summary,
+                        global_step=self._step,
+                    )
                 if (
                     self._step % save_step_interval == 0
                     or self._step == max_num_steps
