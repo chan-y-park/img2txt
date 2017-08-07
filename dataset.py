@@ -155,6 +155,7 @@ class Flickr(ImageCaptionDataset):
                         )
         return train_dataset, dev_dataset, test_dataset
 
+
 class MSCOCO(ImageCaptionDataset):
     def __init__(
         self,
@@ -189,11 +190,12 @@ class Vocabulary:
         self,
         min_word_count=1,
         dataset=None,
+        file_path=None,
     ):
         self._word_count = {}
         self._id_of_word = {}
         self._word_of_id = {}
-        self._size = None
+        self._min_word_count = min_word_count
 
         # NOTE: Negative word ids don't work
         # with sparse argmax-type functions.
@@ -214,8 +216,28 @@ class Vocabulary:
         self._word_of_id[self.end_word_id] = self.end_word
         self._word_of_id[self.unknown_word_id] = self.unknown_word
 
-        self._count(dataset)
-        self._build(min_word_count)
+        if file_path is not None:
+            with open(file_path, 'r') as fp:
+                saved_vocabulary = json.load(fp)
+            self._word_count = saved_vocabulary['word_count']
+            self._id_of_word = saved_vocabulary['id_of_word']
+            for word_id, word_str in saved_vocabulary['word_of_id'].items():
+                self._word_of_id[int(word_id)] = word_str
+            self._min_word_count = saved_vocabulary['min_word_count']
+        else:
+            self._count(dataset)
+            self._build()
+
+    def save(self, file_path):
+        serialized_data = {
+            'word_count': self._word_count,
+            'id_of_word': self._id_of_word,
+            'word_of_id': self._word_of_id,
+            'min_word_count': self._min_word_count,
+        }
+        with open(file_path, 'w') as fp:
+            json.dump(serialized_data, fp)
+
 
     def get_id_of_word(self, word):
         try:
@@ -258,7 +280,7 @@ class Vocabulary:
                 except KeyError:
                     self._word_count[word] = 1
 
-    def _build(self, min_word_count):
+    def _build(self):
         word_id = 3
         self._word_count[self.unknown_word] = 0
         # Start with <bos>, <eos>, and <unk>.
@@ -268,7 +290,7 @@ class Vocabulary:
                 or word == self.end_word
             ):
                 pass
-            elif count < min_word_count:
+            elif count < self._min_word_count:
                 self._word_count[self.unknown_word] += 1
             else:
                 self._id_of_word[word] = word_id

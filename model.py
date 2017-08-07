@@ -12,20 +12,67 @@ from tensorflow.contrib.keras.python.keras.applications.imagenet_utils import (
     decode_predictions
 )
 
-#from dataset import PASCAL, Flickr
 from convnet import build_vgg16, build_inception, preprocess_image
 
 
 LOG_DIR = 'logs'
 CHECKPOINT_DIR = 'checkpoints'
 CONFIG_DIR = 'configs'
-NUM_ENQUEUE_THREADS = 2
+
+inception_v3_config = {
+    'name': 'inception_v3',
+    'train_dataset': 'imagenet',
+    'pretrained_model_file_path': 'pretrained/inception_v3.ckpt',
+    'input_image_shape': [299, 299, 3],
+}
+inception_v4_config = {
+    'name': 'inception_v4',
+    'train_dataset': 'imagenet',
+    'pretrained_model_file_path': 'pretrained/inception_v4.ckpt',
+}
+vgg16_config = {
+    'name': 'vgg16',
+    'train_dataset': 'imagenet',
+    'pretrained_model_file_path': 'pretrained/vgg16_weights.h5',
+    'input_image_shape': [224, 224, 3],
+}
+
+default_config = {
+    'minibatch_size': 32,
+#    'embedding_size': 256,
+    'embedding_size': 512,
+    'max_sequence_length': 20,
+    'rnn_cell': {
+#        'type': 'lstm',
+        'type': 'lstm_block',
+#        'num_units': 256,
+        'num_units': 512,
+        'forget_bias': 1.0,
+        'use_peepholes': False,
+        'dropout_keep_probability': 0.7,
+    },
+    'variable_initializer': {
+        'mean': 0,
+        'stddev': 0.02,
+    },
+    'optimizer': {
+        'initial_learning_rate': 2.0,
+        'learning_rate_decay_rate': 0.5,
+        'num_epochs_per_decay': 8.0,
+        'gradient_clip_norm': 5.0,
+    },
+    'convnet': inception_v3_config,
+    'beam_size': 3,
+    'num_enqueue_threads': 4,
+    'data_queue_size': 200,
+    'input_queue_capacity': 1000,
+}
 
 
 class Image2Text:
     def __init__(
         self,
-        config=None,
+        config_file_path=None,
         training_dataset=None,
         validation_dataset=None,
         vocabulary=None,
@@ -42,7 +89,8 @@ class Image2Text:
         else:
             self._step = None
                 
-        self._config = config
+        if config_file_path is None: 
+            self._config = default_config
 
         for directory in (
             LOG_DIR,
@@ -57,7 +105,10 @@ class Image2Text:
         self._vocabulary = vocabulary
 
         minibatch_size = self._config['minibatch_size']
-        data_queue_size = 4 * minibatch_size * NUM_ENQUEUE_THREADS
+        data_queue_size = (
+            self._config['data_queue_size']
+            * self._config['num_enqueue_threads']
+        )
         self._data_queue = queue.Queue(maxsize=data_queue_size)
 
         self._tf_session = None
@@ -122,7 +173,10 @@ class Image2Text:
             name='mask',
         )
 
-        queue_capacity = 2 * minibatch_size * NUM_ENQUEUE_THREADS
+        queue_capacity = (
+            self._config['input_queue_capacity']
+            * self._config['num_enqueue_threads']
+        )
 
         queue = tf.PaddingFIFOQueue(
             capacity=queue_capacity,
@@ -399,7 +453,7 @@ class Image2Text:
                 word_logits, word_ids = tf.nn.top_k(
                     word_log_probabilities,
                     k=1,
-                    #name='predictions',
+#                    k=self._config['beam_size'],
                 )
 
                 if with_inference:
@@ -415,6 +469,7 @@ class Image2Text:
                     inference_word_logits, inference_word_ids = tf.nn.top_k(
                         inference_word_log_probabilities,
                         k=1,
+#                        k=self._config['beam_size'],
                         name='inference_predictions',
                     )
             # End of fc scope.
@@ -561,6 +616,8 @@ class Image2Text:
         )
 
     def _data_queue_put_thread(self):
+        # TODO: Change to logging.
+        print('Starting data queue put thread...')
         i = 0
         data = self._training_dataset._data
         num_data = len(data)
@@ -570,7 +627,12 @@ class Image2Text:
                 i %= num_data
                 random.shuffle(data)
             try:
-                self._data_queue.put(data[i], block=True, timeout=1)
+                self._data_queue.put(
+                    data[i],
+#                    block=False,
+                    block=True,
+                    timeout=.1,
+                )
             except queue.Full:
                continue 
             i += 1
@@ -594,21 +656,41 @@ class Image2Text:
         )
         return (image_array, caption_sequence, mask)
 
-    def _input_queue_enqueue_thread(self):
+    def _input_queue_enqueue_thread(self, thread_id):
+        # TODO: Change to logging.
+        print('Starting input queue enqueue thread #{}...'.format(thread_id))
         dataset = self._training_dataset
 
         while not self._tf_coordinator.should_stop():
             data_to_enqueue = self._data_queue.get() 
+#            try:
+#                data_to_enqueue = self._data_queue.get(block=False) 
+##                data_to_enqueue = self._data_queue.get(
+##                    block=True,
+##                    timeout=1,
+##                ) 
+#            except queue.Empty:
+#                # TODO: Change to logging.
+#                print('Thread #{}: data queue empty.'.format(thread_id))
+#                continue
             try:
                 img_id, caption_id = data_to_enqueue
                 dataset = self._training_dataset
                 image = dataset.get_image(img_id)
                 caption = dataset.get_captions(img_id)[caption_id]
-                image_array, caption_seq, mask_array = (
-                    self._get_preprocessed_input(
-                        image, caption,
+                try:
+                    image_array, caption_seq, mask_array = (
+                        self._get_preprocessed_input(
+                            image, caption,
+                        )
                     )
-                )
+                except NotImplementedError:
+                    print(
+                        'Input preprocessing failed:'
+                        'img_id = {}, caption_id = {}'
+                        .format(img_id, caption_id)
+                    )
+                    continue
                 self._tf_session.run(
                     fetches=self._tf_graph.get_operation_by_name(
                         'input_queue/enqueue_op'
@@ -647,11 +729,20 @@ class Image2Text:
                     )
                 ),
                 tf.summary.scalar(
+#                    name='input_queue_size',
                     name='queue_size',
                     tensor=self._tf_graph.get_tensor_by_name(
                         'input_queue/size:0'
                     ),
                 ),
+#                tf.summary.scalar(
+#                    name='data_queue_size',
+#                    tensor=tf.placeholder(
+#                        dtype=tf.float32,
+#                        shape=[],
+#                        name='data_queue_size',
+#                    )
+#                )
             ]
             train_summary_op = tf.summary.merge(
                 train_summaries,
@@ -715,7 +806,6 @@ class Image2Text:
         additional_num_steps=None,
     ):
         num_examples_per_epoch = self._training_dataset.get_size()
-        num_training_epochs = self._config['num_training_epochs']
         minibatch_size = self._config['minibatch_size']
         num_steps_per_epoch = (num_examples_per_epoch / minibatch_size)
 
@@ -732,17 +822,14 @@ class Image2Text:
         if self._step is None:
             self._step = 0
 
-        # XXX: Clean-up the following.
         if additional_num_steps is not None:
             max_num_steps = self._step + additional_num_steps
-            num_training_epochs = max_num_steps / num_steps_per_epoch
         elif max_num_steps is None:
-            if num_training_epochs is None:
-                num_training_epochs = 1
-            max_num_steps = num_steps_per_epoch * num_training_epochs
-        else:
-            num_training_epochs = max_num_steps / num_steps_per_epoch
-
+            raise ValueError(
+                'Either max_num_steps or additional_num_steps '
+                'should be provided.'
+            )
+        num_training_epochs = max_num_steps / num_steps_per_epoch
         print(
             'Training for {} steps ({:g} epochs).'
             .format(max_num_steps, num_training_epochs)
@@ -755,8 +842,11 @@ class Image2Text:
         queue_threads =  [
             threading.Thread(target=self._data_queue_put_thread)
         ] + [
-            threading.Thread(target=self._input_queue_enqueue_thread)
-            for i in range(NUM_ENQUEUE_THREADS)
+            threading.Thread(
+                target=self._input_queue_enqueue_thread,
+                kwargs={'thread_id': i},
+            )
+            for i in range(self._config['num_enqueue_threads'])
         ]
         for t in queue_threads:
             t.start()
@@ -800,6 +890,9 @@ class Image2Text:
                     self._tf_graph.get_tensor_by_name(
                         'train/learning_rate:0'
                     ): learning_rate,
+#                    self._tf_graph.get_tensor_by_name(
+#                        'summary/train/data_queue_size:0'
+#                    ): self._data_queue.qsize(),
                 }
 
                 rd = self._tf_session.run(
@@ -1005,9 +1098,14 @@ class Image2Text:
                 img_id, caption_id = dataset._data[k]
                 image = dataset.get_image(img_id)
                 caption = dataset.get_captions(img_id)[caption_id]
-                image_array, caption_seq, mask = self._get_preprocessed_input(
-                    image, caption,
-                )
+                try:
+                    image_array, caption_seq, mask = (
+                        self._get_preprocessed_input(
+                            image, caption,
+                        )
+                    )
+                except NotImplementedError:
+                    continue
                 if (len(caption_seq) <= max_sequence_length):
                     finished = True
             images_array[i] = image_array

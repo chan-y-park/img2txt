@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-#from convnet_config import vgg16
+from PIL import Image
 
 from inception_v3 import inception_v3
 from inception_v4 import inception_v4
@@ -212,7 +212,11 @@ def preprocess_image(convnet_name, image, size):
 
     x = np.array(image, dtype=np.float32)
     if len(x.shape) == 2:
-        raise NotImplementedError
+#        print('Grayscale image not supported.')
+#        raise NotImplementedError
+        rgbimg = Image.new("RGB", image.size)
+        rgbimg.paste(image)
+        x = np.array(rgbimg, dtype=np.float32)
 
     if convnet_name == 'vgg16':
         # Substracting the mean, from Keras' imagenet_utils.preprocess_input.
@@ -226,6 +230,7 @@ def preprocess_image(convnet_name, image, size):
         x /= (np.iinfo(np.uint8).max / 2.0)
         x -= 1.0
     else:
+        print('Unknown convolutional network: {}'.format(convnet_name))
         raise NotImplementedError
 
     return x
