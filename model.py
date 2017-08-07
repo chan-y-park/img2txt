@@ -452,8 +452,8 @@ class Image2Text:
                 )
                 word_logits, word_ids = tf.nn.top_k(
                     word_log_probabilities,
-                    k=1,
-#                    k=self._config['beam_size'],
+#                    k=1,
+                    k=self._config['beam_size'],
                 )
 
                 if with_inference:
@@ -468,8 +468,8 @@ class Image2Text:
                     )
                     inference_word_logits, inference_word_ids = tf.nn.top_k(
                         inference_word_log_probabilities,
-                        k=1,
-#                        k=self._config['beam_size'],
+ #                       k=1,
+                        k=self._config['beam_size'],
                         name='inference_predictions',
                     )
             # End of fc scope.
@@ -617,7 +617,7 @@ class Image2Text:
 
     def _data_queue_put_thread(self):
         # TODO: Change to logging.
-        print('Starting data queue put thread...')
+        # print('Starting data queue put thread...')
         i = 0
         data = self._training_dataset._data
         num_data = len(data)
@@ -657,7 +657,7 @@ class Image2Text:
 
     def _input_queue_enqueue_thread(self, thread_id):
         # TODO: Change to logging.
-        print('Starting input queue enqueue thread #{}...'.format(thread_id))
+        # print('Starting input queue enqueue thread #{}...'.format(thread_id))
         dataset = self._training_dataset
 
         while not self._tf_coordinator.should_stop():
@@ -700,7 +700,9 @@ class Image2Text:
                     }
                 )
             except tf.errors.CancelledError:
-                print('Input queue closed.')
+                pass
+                # TODO: Change to logging.
+                # print('Input queue closed.')
 
     def _build_summary_ops(self):
         with tf.variable_scope('train'):
@@ -813,19 +815,23 @@ class Image2Text:
 
         if additional_num_steps is not None:
             max_num_steps = self._step + additional_num_steps
-        elif max_num_steps is None:
-            raise ValueError(
-                'Either max_num_steps or additional_num_steps '
-                'should be provided.'
-            )
+        else:
+            if max_num_steps is None:
+                raise ValueError(
+                    'Either max_num_steps or additional_num_steps '
+                    'should be provided.'
+                )
+            additional_num_steps = max_num_steps
+
+        display_step_interval = additional_num_steps // 100
+        save_step_interval = additional_num_steps // 10
         num_training_epochs = max_num_steps / num_steps_per_epoch
         print(
-            'Training for {} steps ({:g} epochs).'
-            .format(max_num_steps, num_training_epochs)
+            'Training for {} steps, '
+            'total training {} steps (= {:g} epochs).'
+            .format(additional_num_steps, max_num_steps, num_training_epochs)
         )
 
-        display_step_interval = max_num_steps // 100
-        save_step_interval = max_num_steps // 10
 
         self._tf_coordinator = tf.train.Coordinator()
         queue_threads =  [
@@ -1038,7 +1044,8 @@ class Image2Text:
                 feed_dict=feed_dict,
             )
             prev_rnn_states = rd['rnn/inference_new_states']
-            inputs = rd['rnn/fc/inference_word_ids']
+            # TODO: Need to change when using beam search.
+            inputs = rd['rnn/fc/inference_word_ids'][:, 0:1]
             output_seqs[:, t] = rd['rnn/fc/inference_word_ids'][:, 0]
             if targets is not None:
                 mask_t = masks[:, t]
