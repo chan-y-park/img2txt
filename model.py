@@ -83,7 +83,7 @@ class Image2Text:
         if save_path is not None: 
             run_name, steps = parse_checkpoint_save_path(save_path)
             self._step = get_step_from_checkpoint(save_path)
-            if config is None:
+            if config_file_path is None:
                 with open('{}/{}'.format(CONFIG_DIR, run_name), 'r') as fp:
                     config = json.load(fp)
         else:

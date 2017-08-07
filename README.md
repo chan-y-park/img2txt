@@ -27,14 +27,19 @@ but the code is written from scratch using TensorFlow APIs.
 * NumPy
 * TensorFlow 1.2
 * Pillow
-* NLTK (NLTK data needed for tokenization; only nltk_data/tokenizers/punkt/PY3/english.pickle needed.)
+* NLTK (NLTK data needed for tokenization; only ``nltk_data/tokenizers/punkt/PY3/english.pickle`` needed.)
 * Flask (for web UI)
 
 ### Datasets
-* PASCAL
+#### MS COCO
+#### Flickr 8k/30k
+#### PASCAL
 
 
 ### Pre-trained models
-* Copy Keras' pretrained model ~/.keras/models/vgg16_weights_tf_dim_ordering_tf_kernels.h5 to in img2txt/pretrained/vgg16_weights.h5.
+#### Inception (v3, v4)
+* Get checkpoints from https://github.com/tensorflow/models/tree/master/slim#Pretrained, and put the uncompressed checkpoint files in ``img2txt/pretrained``.
+#### VGG16
+* Copy Keras' pretrained model ``~/.keras/models/vgg16_weights_tf_dim_ordering_tf_kernels.h5`` to in ``img2txt/pretrained/vgg16_weights.h5``.
 
 ## Acknowledgements
