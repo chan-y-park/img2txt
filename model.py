@@ -629,7 +629,6 @@ class Image2Text:
             try:
                 self._data_queue.put(
                     data[i],
-#                    block=False,
                     block=True,
                     timeout=.1,
                 )
@@ -663,16 +662,6 @@ class Image2Text:
 
         while not self._tf_coordinator.should_stop():
             data_to_enqueue = self._data_queue.get() 
-#            try:
-#                data_to_enqueue = self._data_queue.get(block=False) 
-##                data_to_enqueue = self._data_queue.get(
-##                    block=True,
-##                    timeout=1,
-##                ) 
-#            except queue.Empty:
-#                # TODO: Change to logging.
-#                print('Thread #{}: data queue empty.'.format(thread_id))
-#                continue
             try:
                 img_id, caption_id = data_to_enqueue
                 dataset = self._training_dataset
