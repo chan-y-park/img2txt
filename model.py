@@ -80,18 +80,28 @@ class Image2Text:
         gpu_memory_allow_growth=True,
         save_path=None,
         inference_only=False,
+        minibatch_size=None,
     ):
         if save_path is not None: 
             run_name, steps = parse_checkpoint_save_path(save_path)
             self._step = get_step_from_checkpoint(save_path)
             if config_file_path is None:
-                with open('{}/{}'.format(CONFIG_DIR, run_name), 'r') as fp:
-                    config = json.load(fp)
+                config_file_path = os.path.join(CONFIG_DIR, run_name)
+#                with open('{}/{}'.format(CONFIG_DIR, run_name), 'r') as fp:
+#                    self._config = json.load(fp)
         else:
             self._step = None
-                
+
         if config_file_path is None: 
             self._config = default_config
+        else:
+            with open(config_file_path, 'r') as fp:
+                self._config = json.load(fp)
+
+        if minibatch_size is not None:
+            self._config['minibatch_size'] = minibatch_size
+        else:
+            minibatch_size = self._config['minibatch_size']
 
         for directory in (
             LOG_DIR,
@@ -135,6 +145,7 @@ class Image2Text:
                     with_training=False,
                     with_inference=True,
                     with_validation=False,
+                    minibatch_size=minibatch_size,
                 )
             else:
                 self._build_network(
@@ -142,6 +153,7 @@ class Image2Text:
                     with_training=True,
                     with_inference=True,
                     with_validation=True,
+                    minibatch_size=minibatch_size,
                 )
 
             if not inference_only:
@@ -229,8 +241,9 @@ class Image2Text:
         with_training=True,
         with_inference=True,
         with_validation=True,
+        minibatch_size=None,
     ):
-        minibatch_size = self._config['minibatch_size']
+#        minibatch_size = self._config['minibatch_size']
         input_image_shape = self._config['convnet']['input_image_shape']
         embedding_size = self._config['embedding_size']
         vocabulary_size = self._vocabulary.get_size() 
@@ -417,6 +430,7 @@ class Image2Text:
                         image_embeddings,
                         rnn_zero_states,
                     )
+                    scope.reuse_variables()
                 if with_inference:
                     inference_rnn_zero_states = rnn_cell.zero_state(
                         batch_size=minibatch_size,
@@ -426,9 +440,10 @@ class Image2Text:
                         inference_image_embeddings,
                         inference_rnn_zero_states,
                     )
+                    scope.reuse_variables()
                 
                 # XXX: Where to place the following?
-                scope.reuse_variables()
+#                scope.reuse_variables()
 
                 if with_training:
                     rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
@@ -1194,8 +1209,14 @@ class Image2Text:
         )
         return rd['summary/eval/merged/merged']
 
-    def generate_text(self, images_array):
-        rd = self.get_inference(images_array)
+    def generate_text(self, input_image):
+        cfg_convnet = self._config['convnet']
+        preprocessed_image = preprocess_image(
+            convnet_name=cfg_convnet['name'],
+            image=input_image,
+            size=cfg_convnet['input_image_shape'][0],
+        )
+        rd = self.get_inference(preprocessed_image[np.newaxis,:])
 
         sentences = [
             self._vocabulary.get_sentence_from_word_ids(seq)
