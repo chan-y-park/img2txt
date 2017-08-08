@@ -40,16 +40,16 @@ vgg16_config = {
 
 default_config = {
     'minibatch_size': 32,
-#    'embedding_size': 256,
     'embedding_size': 512,
     'max_sequence_length': 20,
     'rnn_cell': {
 #        'type': 'lstm',
-        'type': 'lstm_block',
-#        'num_units': 256,
+#        'type': 'lstm_block',
+        'type': 'gru',
+#        'type': 'gru_block',
         'num_units': 512,
-        'forget_bias': 1.0,
-        'use_peepholes': False,
+#        'forget_bias': 1.0,
+#        'use_peepholes': False,
         'dropout_keep_probability': 0.7,
     },
     'variable_initializer': {
@@ -90,9 +90,10 @@ class Image2Text:
             run_name, steps = parse_checkpoint_save_path(save_path)
             self._step = get_step_from_checkpoint(save_path)
             if config_file_path is None:
-                config_file_path = os.path.join(CONFIG_DIR, run_name)
-#                with open('{}/{}'.format(CONFIG_DIR, run_name), 'r') as fp:
-#                    self._config = json.load(fp)
+                config_file_path = os.path.join(
+                    CONFIG_DIR,
+                    (run_name + '.json'),
+                )
         else:
             self._step = None
 
@@ -190,6 +191,7 @@ class Image2Text:
             )
             self._tf_saver = tf.train.Saver(
                 var_list=self._saver_var_list,
+                max_to_keep=10,
             )
             if save_path is not None:
                 self._tf_saver.restore(self._tf_session, save_path)
@@ -377,6 +379,9 @@ class Image2Text:
                 )
             
         with tf.variable_scope('rnn'):
+            cfg_rnn_cell = self._config['rnn_cell']
+            rnn_output_size = cfg_rnn_cell['num_units']
+
             word_embedding = tf.get_variable(
                 name='word_embedding',
                 shape=[vocabulary_size, embedding_size],
@@ -397,36 +402,47 @@ class Image2Text:
                     inference_input_embeddings,
                     axis=1,
                 )
-                inference_prev_rnn_states = tf.placeholder(
-                    dtype=tf.float32,
-                    shape=[minibatch_size,
-                           (2 * self._config['rnn_cell']['num_units'])],
-                    name='inference_prev_states',
-                )
-                inference_prev_rnn_states = tf.split(
-                    inference_prev_rnn_states,
-                    num_or_size_splits=2,
-                    axis=1,
-                )
+                if 'lstm' in cfg_rnn_cell['type']:
+                    inference_prev_rnn_states = tf.placeholder(
+                        dtype=tf.float32,
+                        shape=[minibatch_size,
+                               (2 * rnn_output_size)],
+                        name='inference_prev_states',
+                    )
+                    inference_prev_rnn_states = tf.split(
+                        inference_prev_rnn_states,
+                        num_or_size_splits=2,
+                        axis=1,
+                    )
+                elif 'gru' in cfg_rnn_cell['type']:
+                    inference_prev_rnn_states = tf.placeholder(
+                        dtype=tf.float32,
+                        shape=[minibatch_size, rnn_output_size],
+                        name='inference_prev_states',
+                    )
+                else:
+                    raise ValueError
 
-            # TODO: Use DNC instead of LSTM.
-            cfg_rnn_cell = self._config['rnn_cell']
-            rnn_output_size = cfg_rnn_cell['num_units']
-            lstm_kwargs = {
-                'num_units': cfg_rnn_cell['num_units'],
-                'forget_bias': cfg_rnn_cell['forget_bias'],
-            }
+
+            # TODO: Use DNC for LSTM.
+            rnn_kwargs = {}
             if cfg_rnn_cell['type'] == 'lstm_block':
-                tf_lstm_cell = tf.contrib.rnn.LSTMBlockCell
-                lstm_kwargs['use_peephole'] = cfg_rnn_cell['use_peepholes']
+                tf_rnn_cell = tf.contrib.rnn.LSTMBlockCell
+                rnn_kwargs['use_peephole'] = cfg_rnn_cell['use_peepholes']
+                rnn_kwargs['forget_bias'] = cfg_rnn_cell['forget_bias']
             elif cfg_rnn_cell['type'] == 'lstm':
-                tf_lstm_cell = tf.nn.rnn_cell.LSTMCell
-                lstm_kwargs['use_peepholes'] = cfg_rnn_cell['use_peepholes']
+                tf_rnn_cell = tf.nn.rnn_cell.LSTMCell
+                rnn_kwargs['use_peepholes'] = cfg_rnn_cell['use_peepholes']
+                rnn_kwargs['forget_bias'] = cfg_rnn_cell['forget_bias']
+            elif cfg_rnn_cell['type'] == 'gru':
+                tf_rnn_cell = tf.contrib.rnn.GRUCell
+            elif cfg_rnn_cell['type'] == 'gru_block':
+                tf_rnn_cell = tf.contrib.rnn.GRUBlockCell
             else:
                 raise ValueError
 
             with tf.variable_scope('cell') as scope:
-                rnn_cell = tf_lstm_cell(**lstm_kwargs)
+                rnn_cell = tf_rnn_cell(cfg_rnn_cell['num_units'], **rnn_kwargs)
 
                 if with_training:
                     # Training uses dropout in RNN.
@@ -944,9 +960,8 @@ class Image2Text:
             fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
 
         try:
-            while self._step < max_num_steps:
-                self._step += 1
-
+            step = 0
+            while self._step <= max_num_steps:
                 if self._tf_coordinator.should_stop():
                     break
 
@@ -956,9 +971,6 @@ class Image2Text:
                     self._tf_graph.get_tensor_by_name(
                         'train/learning_rate:0'
                     ): learning_rate,
-#                    self._tf_graph.get_tensor_by_name(
-#                        'summary/train/data_queue_size:0'
-#                    ): self._data_queue.qsize(),
                 }
 
                 rd = self._tf_session.run(
@@ -971,11 +983,11 @@ class Image2Text:
                     global_step=self._step,
                 )
 
-                if self._step % display_step_interval == 0:
+                if step % display_step_interval == 0:
                     print(
                         '{:g}% : minibatch_loss = {:g}'
                         .format(
-                            (self._step / max_num_steps * 100),
+                            (step / additional_num_steps * 100),
                             rd['train/minibatch_loss'],
                         ),
                     )
@@ -1003,7 +1015,7 @@ class Image2Text:
                         global_step=self._step,
                     )
                 if (
-                    self._step % save_step_interval == 0
+                    step % save_step_interval == 0
                     or self._step == max_num_steps
                 ):
                     save_path = self._tf_saver.save(
@@ -1013,8 +1025,10 @@ class Image2Text:
                     )
                     print('checkpoint saved at {}'.format(save_path))
 
+                step += 1
+                self._step += 1
 
-            # End of one training step for-loop.
+            # End of one training while-loop.
 
         except tf.errors.OutOfRangeError:
             raise RuntimeError
