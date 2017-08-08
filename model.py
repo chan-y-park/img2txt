@@ -13,6 +13,7 @@ from tensorflow.contrib.keras.python.keras.applications.imagenet_utils import (
 )
 
 from convnet import build_vgg16, build_inception, preprocess_image
+from dataset import Vocabulary
 
 
 LOG_DIR = 'logs'
@@ -66,6 +67,9 @@ default_config = {
     'num_enqueue_threads': 4,
     'data_queue_size': 200,
     'input_queue_capacity': 1000,
+    'training_dataset_name': None,
+    'validation_dataset_name': None,
+    'vocabulary_file_path': None,
 }
 
 
@@ -75,14 +79,14 @@ class Image2Text:
         config_file_path=None,
         training_dataset=None,
         validation_dataset=None,
-        vocabulary=None,
+        vocabulary_file_path=None,
         gpu_memory_fraction=None,
         gpu_memory_allow_growth=True,
         save_path=None,
         inference_only=False,
         minibatch_size=None,
     ):
-        if save_path is not None: 
+        if save_path is not None and not inference_only: 
             run_name, steps = parse_checkpoint_save_path(save_path)
             self._step = get_step_from_checkpoint(save_path)
             if config_file_path is None:
@@ -97,6 +101,20 @@ class Image2Text:
         else:
             with open(config_file_path, 'r') as fp:
                 self._config = json.load(fp)
+
+        if training_dataset is not None:
+            self._config['training_dataset_name'] = training_dataset.name
+
+        if validation_dataset is not None:
+            self._config['validation_dataset_name'] = validation_dataset.name
+
+        if vocabulary_file_path is None:
+            raise ValueError('vocabulary_file_path must be provided.')
+        else:
+            self._config['vocabulary_file_path'] = vocabulary_file_path
+            self._vocabulary = Vocabulary(
+                file_path=vocabulary_file_path
+            )
 
         if minibatch_size is not None:
             self._config['minibatch_size'] = minibatch_size
@@ -113,7 +131,6 @@ class Image2Text:
 
         self._training_dataset = training_dataset
         self._validation_dataset = validation_dataset
-        self._vocabulary = vocabulary
 
         minibatch_size = self._config['minibatch_size']
         data_queue_size = (
@@ -1012,7 +1029,7 @@ class Image2Text:
 
         self._tf_coordinator.join(queue_threads)
 
-        with open('{}/{}'.format(CONFIG_DIR, run_name), 'w') as fp:
+        with open(os.path.join(CONFIG_DIR, run_name + '.json'), 'w') as fp:
             json.dump(self._config, fp)
 
         summary_writer.close()
@@ -1209,7 +1226,7 @@ class Image2Text:
         )
         return rd['summary/eval/merged/merged']
 
-    def generate_text(self, input_image):
+    def generate_sentence(self, input_image):
         cfg_convnet = self._config['convnet']
         preprocessed_image = preprocess_image(
             convnet_name=cfg_convnet['name'],
@@ -1218,12 +1235,39 @@ class Image2Text:
         )
         rd = self.get_inference(preprocessed_image[np.newaxis,:])
 
-        sentences = [
-            self._vocabulary.get_sentence_from_word_ids(seq)
-            for seq in rd['output_sequences']
-        ]
+        sentence = self._vocabulary.get_sentence_from_word_ids(
+            rd['output_sequences'][0]
+        )
+        return sentence
 
-        return sentences
+    def save_coco_eval_cap_result(
+        self,
+        file_path,
+        dataset=None,    
+        num_samples=4000,
+    ):
+        if dataset is None:
+            if self._validation_dataset is None:
+                raise RuntimeError('No validation dataset available.')
+            else:
+                dataset = self._validation_dataset
+
+        result = []
+        image_ids = random.sample(
+            dataset.get_image_ids(),
+            k=num_samples,
+        )
+        # XXX
+        for image_id in image_ids[:1000]:
+            coco_image_id = int(image_id.split('_')[-1].split('.')[0])
+            input_image = dataset.get_image(image_id) 
+            generated_sentence = self.generate_sentence(input_image)
+            result.append(
+                {'image_id': coco_image_id,
+                 'caption': generated_sentence.rstrip('.')}
+            )
+        with open(file_path, 'w') as fp:
+            json.dump(result, fp)
 
     def decode_convnet_predictions(self, predictions):
         convnet_train_dataset = self._config['convnet']['train_dataset']

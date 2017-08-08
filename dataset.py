@@ -18,6 +18,10 @@ class ImageCaptionDataset:
         # A list of (image_file_name, caption_id)
         self._data = []
         self._image_dir = image_dir
+        self.name = None
+
+    def get_image_ids(self):
+        return list(self._captions.keys())
 
     def get_size(self):
         return len(self._data)
@@ -55,6 +59,7 @@ class PASCAL(ImageCaptionDataset):
         image_dir=None,
     ):
         super().__init__(image_dir)
+        self.name = 'pascal'
 
         img_path_start_string = '<td><img src="pascal-sentences_files/'
         img_path_end_string = '"></td>\n'
@@ -107,8 +112,10 @@ class Flickr(ImageCaptionDataset):
         self,
         caption_file=None,
         image_dir=None,
+        name='flickr',
     ):
         super().__init__(image_dir)
+        self.name = name
         prev_img_id = None
 
         with open(caption_file, 'r') as fp:
@@ -153,6 +160,9 @@ class Flickr(ImageCaptionDataset):
                         sub_dataset._data.append(
                             (img_id, caption_id)
                         )
+        train_dataset.name = self.name + '_training'
+        dev_dataset.name = self.name + '_validation'
+        test_dataset.name = self.name + '_test'
         return train_dataset, dev_dataset, test_dataset
 
 
@@ -161,8 +171,10 @@ class MSCOCO(ImageCaptionDataset):
         self,
         caption_file=None,
         image_dir=None,
+        name='ms_coco',
     ):
         super().__init__(image_dir)
+        self.name = name
         image_file_name_of_id = {}
 
         with open(caption_file, 'r') as fp:
@@ -191,7 +203,9 @@ class Vocabulary:
         min_word_count=1,
         dataset=None,
         file_path=None,
+        name=None,
     ):
+        self.name = name
         self._word_count = {}
         self._id_of_word = {}
         self._word_of_id = {}
@@ -312,3 +326,7 @@ class Vocabulary:
             
         sentence = ' '.join(words)
         return sentence
+
+
+def evaluate_bleu_scores(dataset):
+    pass
