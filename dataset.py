@@ -316,16 +316,29 @@ class Vocabulary:
                 for word in self.tokenize(raw_sentence)]
 
     def get_sentence_from_word_ids(self, word_ids):
-        words = []
-        for word_id in word_ids:
-            if word_id == self.end_word_id:
-                break
-            else:
-                word = self.get_word_of_id(word_id)
-                words.append(word)
+#        words = []
+#        for word_id in word_ids:
+#            if word_id == self.end_word_id:
+#                break
+#            else:
+#                word = self.get_word_of_id(word_id)
+#                words.append(word)
+        words = [
+            self.get_word_of_id(word_id)
+            for word_id in word_ids
+        ]
             
         sentence = ' '.join(words)
         return sentence
+
+    def get_postprocessed_sequence(self, sequence):
+        post_seq = []
+        for word_id in sequence:
+            if word_id == self.end_word_id:
+                break
+            else:
+                post_seq.append(word_id)
+        return post_seq
 
 
 def evaluate_bleu_scores(dataset):

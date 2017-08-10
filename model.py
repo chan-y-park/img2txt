@@ -19,6 +19,7 @@ from dataset import Vocabulary
 LOG_DIR = 'logs'
 CHECKPOINT_DIR = 'checkpoints'
 CONFIG_DIR = 'configs'
+NUM_SIMILAR_WORDS = 40
 
 inception_v3_config = {
     'name': 'inception_v3',
@@ -86,7 +87,7 @@ class Image2Text:
         inference_only=False,
         minibatch_size=None,
     ):
-        if save_path is not None and not inference_only: 
+        if save_path is not None: 
             run_name, steps = parse_checkpoint_save_path(save_path)
             self._step = get_step_from_checkpoint(save_path)
             if config_file_path is None:
@@ -653,6 +654,37 @@ class Image2Text:
                     dtype=tf.float32,
                     name='minibatch_loss',
                 )
+        
+#        if with_inference:
+#            with tf.variable_scope('embedding_similarity'):
+#                # Find similar words in the embedding space
+#                # in terms of cosine similarity.
+#                normed_word_embedding = tf.nn.l2_normalize(
+#                    word_embedding,
+#                    dim=1,
+#                    name='normed_word_embedding',
+#                )
+#                normed_image_embeddings = tf.nn.l2_normalize(
+#                    inference_image_embeddings,
+#                    dim=1,
+#                    name='normed_image_embeddings',
+#                )
+#                cosine_similarities = tf.matmul(
+#                    normed_image_embeddings,
+#                    word_embedding,
+#                    transpose_b=True,
+#                    name='cosine_similarities',
+#                )
+#                top_cosine_similarities, top_similar_word_ids = tf.nn.top_k(
+#                    cosine_similarities,
+#                    k=NUM_SIMILAR_WORDS,
+#                    name='top_cosine_similarities',
+#                )
+#                normed_top_word_vectors = tf.gather(
+#                    normed_word_embedding,
+#                    top_similar_word_ids,
+#                    name='normed_top_word_vectors',
+#                )
 
     def _build_convnet(self, input_images, reuse=None, scope=None):
         minibatch_size = self._config['minibatch_size']
@@ -1066,22 +1098,39 @@ class Image2Text:
             ): images_array,
         }
         fetch_dict = {
-            'rnn/inference_initial_states': self._tf_graph.get_tensor_by_name(
-                'rnn/inference_initial_states:0'
-            ),
-            'convnet/inference_predictions': (
+            'rnn/inference_initial_states':
+                self._tf_graph.get_tensor_by_name(
+                    'rnn/inference_initial_states:0'
+                ),
+            'convnet/inference_predictions':
                 self._tf_graph.get_tensor_by_name(
                     'convnet/inference_predictions:0'
-                )
-            ),
+                ),
+            # TODO: Check the latency of fetching the following tensor.
+            'rnn/word_embedding':
+                self._tf_graph.get_tensor_by_name(
+                    'rnn/word_embedding:0'
+                ),
+            'image_embedding/inference_image_embeddings':
+                self._tf_graph.get_tensor_by_name(
+                    'image_embedding/inference_image_embeddings:0'
+                ),
+#            'embedding_similarity/normed_top_word_ids':
+#                self._tf_graph.get_tensor_by_name(
+#                    'embedding_similarity/top_cosine_similarities:1'
+#                ),
+#            'embedding_similarity/normed_top_word_vectors':
+#                self._tf_graph.get_tensor_by_name(
+#                    'embedding_similarity/normed_top_word_vectors:0'
+#                ),
         }
-        rd = self._tf_session.run(
+        rd_init = self._tf_session.run(
             fetches=fetch_dict,
             feed_dict=feed_dict,
         )
 
-        convnet_predictions = rd['convnet/inference_predictions']
-        prev_rnn_states = rd['rnn/inference_initial_states']
+#        convnet_predictions = rd['convnet/inference_predictions']
+        prev_rnn_states = rd_init['rnn/inference_initial_states']
 
         inputs = np.array(
             [[self._vocabulary.start_word_id] for i in range(minibatch_size)]
@@ -1143,11 +1192,18 @@ class Image2Text:
                     )
                     minibatch_loss += loss
         rd = {
-            'convnet_predictions': convnet_predictions,
+#            'convnet_predictions': convnet_predictions,
             'output_sequences': output_seqs,
             'minibatch_loss': minibatch_loss,
         }
-
+        for var_name in [
+            'rnn/word_embedding',
+            'image_embedding/inference_image_embeddings',
+#            'embedding_similarity/normed_top_word_ids',
+#            'embedding_similarity/normed_top_word_vectors',
+            'convnet/inference_predictions',
+        ]:
+            rd[var_name] = rd_init[var_name]
         return rd
 
     def evaluate_validation(self):
@@ -1208,7 +1264,9 @@ class Image2Text:
         output_sentences = [
             '{}: {}'.format(
                 i,
-                self._vocabulary.get_sentence_from_word_ids(seq)
+                self._vocabulary.get_sentence_from_word_ids(
+                    self._vocabulary.get_postprocessed_sequence(seq)
+                )
             )
             for i, seq in enumerate(rd['output_sequences'])
         ]
@@ -1250,7 +1308,9 @@ class Image2Text:
         rd = self.get_inference(preprocessed_image[np.newaxis,:])
 
         sentence = self._vocabulary.get_sentence_from_word_ids(
-            rd['output_sequences'][0]
+            self._vocabulary.get_postprocessed_sequence(
+                rd['output_sequences'][0]
+            )
         )
         return sentence
 
@@ -1449,7 +1509,7 @@ class Image2Text:
             )
 
             inference_convnet_predictions = inference_rd[
-                'convnet_predictions'
+                'convnet/inference_predictions'
             ][:,-1000:]
             decoded_predictions = decode_predictions(
                 inference_convnet_predictions
@@ -1461,7 +1521,9 @@ class Image2Text:
                     print('{}: {:g}'.format(obj, prob))
 
             output_sentence = self._vocabulary.get_sentence_from_word_ids(
-                inference_rd['output_sequences'][0]
+                self._vocabulary.get_postprocessed_sequence(
+                    inference_rd['output_sequences'][0]
+                )
             )
             print('inference minibatch loss = {}'
                   .format(inference_rd['minibatch_loss']))

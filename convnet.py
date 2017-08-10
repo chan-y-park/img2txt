@@ -199,16 +199,19 @@ def get_vgg16_weights(weights_f, block_layer_name, var_name, var_shape):
         trainable=False,
     )
 
-def preprocess_image(convnet_name, image, size):
-    # TODO: Center-crop and resize.
-    width, height = image.size
-    min_size = min(width, height)
-    left = int((width - min_size) / 2.0)
-    upper = int((height - min_size) / 2.0)
-
-    image = image.crop((left, upper, left + min_size, upper + min_size))
-
+def resize_image(image, size, crop=True):
+    if crop:
+        width, height = image.size
+        min_size = min(width, height)
+        left = int((width - min_size) / 2.0)
+        upper = int((height - min_size) / 2.0)
+        image = image.crop((left, upper, left + min_size, upper + min_size))
     image = image.resize((size, size))
+    return image
+
+
+def preprocess_image(convnet_name, image, size):
+    image = resize_image(image, size)
 
     x = np.array(image, dtype=np.float32)
     if len(x.shape) == 2:
