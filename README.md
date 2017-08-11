@@ -32,7 +32,10 @@ but the code is written from scratch using TensorFlow APIs, except Inception mod
 * TensorFlow 1.2
 * Pillow
 * NLTK (NLTK data needed for tokenization; only ``nltk_data/tokenizers/punkt/PY3/english.pickle`` needed.)
-* Flask (for web UI)
+
+And its web UI requires the following libraries.
+* Flask
+* Bokeh (for word embedding visualization)
 
 ### Datasets
 #### MS COCO
