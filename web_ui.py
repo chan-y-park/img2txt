@@ -1,6 +1,8 @@
 import os
 import uuid
 import time
+import glob
+import random
 
 import numpy as np
 import flask
@@ -90,31 +92,43 @@ def index():
     return flask.redirect(flask.url_for('config'))
 
 
+def get_random_image(
+    image_dir='test_images',
+):
+    image_file_path = random.choice(glob.glob("test_images/*.jpg"))
+    return Image.open(image_file_path)
+
+
 def config():
     app = flask.current_app
     image_file = None
     if flask.request.method == 'POST':
-        if 'image_file' not in flask.request.files:
-            print('No image file in the html request form.')
-            return flask.redirect(flask.request.url)
+        image_id = str(uuid.uuid4())
+        image_file_path = os.path.join(
+            app.config['UPLOAD_FOLDER'],
+            '{}.jpg'.format(image_id)
+        )
+        if 'use_random_image' in flask.request.form:
+            if eval(flask.request.form['use_random_image']):
+                image = get_random_image()
+                image.save(image_file_path)
+        else:
+            if 'image_file' not in flask.request.files:
+                print('No image file in the html request form.')
+                return flask.redirect(flask.request.url)
 
-        image_file = flask.request.files['image_file']
-        if image_file.filename == '':
-            print('No selected file')
-            return flask.redirect(flask.request.url)
+            image_file = flask.request.files['image_file']
+            if image_file.filename == '':
+                print('No selected file')
+                return flask.redirect(flask.request.url)
 
-        if image_file and allowed_file(image_file.filename):
-#            filename = secure_filename(image_file.filename)
-            image_id = str(uuid.uuid4())
-            file_path = os.path.join(
-                app.config['UPLOAD_FOLDER'],
-                '{}.jpg'.format(image_id)
-            )
-            image_file.save(file_path)
-            return flask.render_template(
-                'config.html',
-                image_id=image_id,
-            )
+            if image_file and allowed_file(image_file.filename):
+                image_file.save(image_file_path)
+
+        return flask.render_template(
+            'config.html',
+            image_id=image_id,
+        )
     else:
         # TODO: Load a default image file.
         return flask.render_template('config.html')

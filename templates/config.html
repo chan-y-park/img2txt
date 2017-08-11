@@ -15,10 +15,20 @@
             <div class="col-md-3">
                 <input type="file" name="image_file" id="image_file">
             </div>
-        </div>
-        <div class="form-group">
             <div class="col-md-3">
                 <input type="submit" class="btn btn-default" id="upload_image_button" formaction="{{ url_for('config') }}" value="Upload Image">
+            </div>
+        </div>
+    </form>
+    <form action="" class="form-horizontal" method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <div class="col-md-6">
+                <label for="image_file" class="control-label">Or try a random image from the test set.</label>
+            </div>
+            <div class="col-md-3">
+                <input type="submit" class="btn btn-default" id="random_image_button" formaction="{{ url_for('config') }}"
+                 value="Random Image">
+                 <input type="hidden" name="use_random_image" value="True">
             </div>
         </div>
     </form>
