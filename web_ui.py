@@ -1,15 +1,23 @@
+import os
+import uuid
+import time
+
+import numpy as np
 import flask
 
-from werkzeug.utils import secure_filename
+#from werkzeug.utils import secure_filename
 from PIL import Image
 
 from model import Image2Text
-from convnet import preprocess_image
+from convnet import resize_image, preprocess_image
+from word_embedding_plot import get_word_embedding_plot
 
 # TODO: display a message to the user browser.
 message = print
 
 ALLOWED_EXTENTIONS = ['jpg', 'jpeg']
+UPLOADED_IMAGES_DIR = 'uploaded_images'
+INPUT_IMAGES_DIR = 'input_images'
 
 
 def allowed_file(filename):
@@ -19,22 +27,64 @@ def allowed_file(filename):
     return False
 
 
+def get_image_path(directory, image_id, ext='jpg'):
+    return os.path.join(
+        directory,
+        '.'.join([image_id, ext]),
+    )
+
+
 class Img2TxtWebApp(flask.Flask):
     def __init__(self):
         super().__init__('Img2Txt')
+        for directory in [UPLOADED_IMAGES_DIR, INPUT_IMAGES_DIR]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
         self._img2txt_inference = Image2Text(
-            vocabulary=ms_coco_vocabulary,
-            save_path='img2txt.ckpt',
+            vocabulary_file_path='ms_coco_vocabulary.json',
+            config_file_path='inference/config.json',
+            checkpoint_save_path='inference/img2txt',
             inference_only=True,
+            minibatch_size=1,
         )
-    def get_inference_result(self, image_id)
-        # TODO: Return image-word coembedding.
-        input_image_path = get_image_path(image_id, 'jpg')
-        generated_sentence = self._img2txt_inference.generate_sentence(
-            input_image,
+    def get_inference_result(self, image_id):
+        uploaded_image_path = get_image_path(
+            UPLOADED_IMAGES_DIR,
+            image_id,
         )
-        return generated_sentence
+        uploaded_image = Image.open(uploaded_image_path)
 
+        cfg_convnet = self._img2txt_inference._config['convnet']
+        input_image_size = cfg_convnet['input_image_shape'][0]
+        input_image = resize_image(uploaded_image, input_image_size)
+        input_image.save(get_image_path(INPUT_IMAGES_DIR, image_id))
+
+        preprocessed_image = preprocess_image(
+            convnet_name=cfg_convnet['name'],
+            image=input_image,
+        )
+        rd = self._img2txt_inference.get_inference(
+            preprocessed_image[np.newaxis,:],
+        )
+
+        vocabulary = self._img2txt_inference._vocabulary 
+#        image_vector = rd['image_embedding/inference_image_embeddings'][0]
+        word_embedding = rd['rnn/word_embedding']
+        sequence = rd['output_sequences'][0]
+        post_seq = vocabulary.get_postprocessed_sequence(sequence)
+
+        bokeh_plot = get_word_embedding_plot(
+            sequence=post_seq,
+            tsne_file_path='ms_coco_word_embedding_pca_cosine.npy',
+            vocabulary=vocabulary,
+        )
+
+        return {
+            'image_id': image_id,
+            'caption': vocabulary.get_sentence_from_word_ids(post_seq),
+            'bokeh_plot_script': bokeh_plot['script'],
+            'bokeh_plot_div': bokeh_plot['div'],
+        }
 
 def index():
     return flask.redirect(flask.url_for('config'))
@@ -46,15 +96,15 @@ def config():
     if flask.request.method == 'POST':
         if 'image_file' not in flask.request.files:
             print('No image file in the html request form.')
-            return redirect(flask.request.url)
+            return flask.redirect(flask.request.url)
 
         image_file = flask.request.files['image_file']
         if image_file.filename == '':
             print('No selected file')
-            return redirect(flask.request.url)
+            return flask.redirect(flask.request.url)
 
         if image_file and allowed_file(image_file.filename):
-            filename = secure_file(image_file.filename)
+#            filename = secure_filename(image_file.filename)
             image_id = str(uuid.uuid4())
             file_path = os.path.join(
                 app.config['UPLOAD_FOLDER'],
@@ -70,11 +120,36 @@ def config():
         return flask.render_template('config.html')
 
 
+def get_image(directory, image_id):
+    rv = flask.send_file(
+        get_image_path(directory, image_id),
+        mimetype='image/jpg',
+        cache_timeout=0,
+        as_attachment=False,
+        attachment_filename='image.jpg',
+    )
+    rv.set_etag(str(time.time()))
+    return rv
+
+
+def uploaded_image(image_id):
+    return get_image(UPLOADED_IMAGES_DIR, image_id)
+
+
+def input_image(image_id):
+    return get_image(INPUT_IMAGES_DIR, image_id)
+
+
 def show_results():
     app = flask.current_app
     image_id = flask.request.form['image_id']
 
-    generated_sentence = app.get_inference_result(image_id)
+    rd_inference = app.get_inference_result(image_id)
+
+    return flask.render_template(
+        'result.html',
+        **rd_inference,
+    )
 
 
 
@@ -90,24 +165,34 @@ def get_web_app(
     )
 
     web_app.add_url_rule(
-        '/', 'index', index, methods=['GET'],
+        '/',
+        'index',
+        index,
+        methods=['GET'],
     )
     web_app.add_url_rule(
-        '/config', 'config', config, methods=['GET', 'POST'],
+        '/config',
+        'config',
+        config,
+        methods=['GET', 'POST'],
     )
     web_app.add_url_rule(
-        '/input_image/<image_id>', 'input_image', input_image, methods=['GET'],
+        '/input_image/<image_id>',
+        'input_image',
+        input_image,
+        methods=['GET'],
     )
     web_app.add_url_rule(
-        '/embedding/<embedding_id>', 'embedding', embedding, methods=['GET'],
+        '/uploaded_image/<image_id>',
+        'uploaded_image',
+        uploaded_image,
+        methods=['GET'],
     )
     web_app.add_url_rule(
-        '/results', 'show_results', show_results, methods=['POST'],
+        '/results',
+        'show_results',
+        show_results,
+        methods=['POST'],
     )
 
     return web_app
-
-
-def get_image_path(upload_folder, image_id, ext='jpg'):
-    return '{}/{}.{}'.format(upload_folder, image_id, ext)
-

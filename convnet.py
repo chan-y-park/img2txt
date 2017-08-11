@@ -210,18 +210,21 @@ def resize_image(image, size, crop=True):
     return image
 
 
-def preprocess_image(convnet_name, image, size):
-    image = resize_image(image, size)
+def preprocess_image(convnet_name, image, size=None):
+    if size is not None:
+        image = resize_image(image, size)
+
+    width, height = image.size
+    assert(width == height)
 
     x = np.array(image, dtype=np.float32)
     if len(x.shape) == 2:
-#        print('Grayscale image not supported.')
-#        raise NotImplementedError
         rgbimg = Image.new("RGB", image.size)
         rgbimg.paste(image)
         x = np.array(rgbimg, dtype=np.float32)
 
     if convnet_name == 'vgg16':
+        assert(width == 224)
         # Substracting the mean, from Keras' imagenet_utils.preprocess_input.
         # 'RGB'->'BGR'
         x = x[:, :, ::-1]
@@ -229,7 +232,8 @@ def preprocess_image(convnet_name, image, size):
         x[:, :, 0] -= 103.939
         x[:, :, 1] -= 116.779
         x[:, :, 2] -= 123.68
-    elif convnet_name[:len('inception')] == 'inception':
+    elif 'inception' in convnet_name:
+        assert(width == 299)
         x /= (np.iinfo(np.uint8).max / 2.0)
         x -= 1.0
     else:

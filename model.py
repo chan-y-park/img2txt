@@ -16,9 +16,10 @@ from convnet import build_vgg16, build_inception, preprocess_image
 from dataset import Vocabulary
 
 
-LOG_DIR = 'logs'
-CHECKPOINT_DIR = 'checkpoints'
-CONFIG_DIR = 'configs'
+DEFAULT_LOG_DIR = 'logs'
+SAVE_NAME = 'img2txt'
+#DEFAULT_CHECKPOINT_DIR = 'checkpoints'
+#DEFAULT_CONFIG_DIR = 'configs'
 NUM_SIMILAR_WORDS = 40
 
 inception_v3_config = {
@@ -71,38 +72,31 @@ default_config = {
     'training_dataset_name': None,
     'validation_dataset_name': None,
     'vocabulary_file_path': None,
+    'global_step': None,
 }
 
 
 class Image2Text:
     def __init__(
         self,
-        config_file_path=None,
         training_dataset=None,
         validation_dataset=None,
         vocabulary_file_path=None,
-        gpu_memory_fraction=None,
-        gpu_memory_allow_growth=True,
-        save_path=None,
         inference_only=False,
         minibatch_size=None,
+        config_file_path=None,
+        checkpoint_save_path=None,
+        run_name=None,
+        gpu_memory_fraction=None,
+        gpu_memory_allow_growth=True,
     ):
-        if save_path is not None: 
-            run_name, steps = parse_checkpoint_save_path(save_path)
-            self._step = get_step_from_checkpoint(save_path)
-            if config_file_path is None:
-                config_file_path = os.path.join(
-                    CONFIG_DIR,
-                    (run_name + '.json'),
-                )
-        else:
-            self._step = None
-
         if config_file_path is None: 
             self._config = default_config
         else:
             with open(config_file_path, 'r') as fp:
                 self._config = json.load(fp)
+
+        self._step = self._config['global_step']
 
         if training_dataset is not None:
             self._config['training_dataset_name'] = training_dataset.name
@@ -123,13 +117,13 @@ class Image2Text:
         else:
             minibatch_size = self._config['minibatch_size']
 
-        for directory in (
-            LOG_DIR,
-            CHECKPOINT_DIR,
-            CONFIG_DIR,
-        ):
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+#        for directory in (
+#            LOG_DIR,
+#            CHECKPOINT_DIR,
+#            CONFIG_DIR,
+#        ):
+#            if not os.path.exists(directory):
+#                os.makedirs(directory)
 
         self._training_dataset = training_dataset
         self._validation_dataset = validation_dataset
@@ -194,8 +188,8 @@ class Image2Text:
                 var_list=self._saver_var_list,
                 max_to_keep=10,
             )
-            if save_path is not None:
-                self._tf_saver.restore(self._tf_session, save_path)
+            if checkpoint_save_path is not None:
+                self._tf_saver.restore(self._tf_session, checkpoint_save_path)
 
     def _build_input_queue(self):
         minibatch_size = self._config['minibatch_size']
@@ -911,9 +905,10 @@ class Image2Text:
 
     def train(
         self,
-        run_name=None,
         max_num_steps=None,
         additional_num_steps=None,
+        run_name=None,
+        log_dir=DEFAULT_LOG_DIR,
     ):
         num_examples_per_epoch = self._training_dataset.get_size()
         minibatch_size = self._config['minibatch_size']
@@ -925,7 +920,7 @@ class Image2Text:
             )
 
         summary_writer = tf.summary.FileWriter(
-            logdir='{}/{}'.format(LOG_DIR, run_name),
+            logdir=os.path.join(log_dir, run_name),
             graph=self._tf_graph,
         )
 
@@ -1052,7 +1047,9 @@ class Image2Text:
                 ):
                     save_path = self._tf_saver.save(
                         self._tf_session,
-                        save_path='checkpoints/{}'.format(run_name),
+                        save_path=os.path.join(
+                            run_name, SAVE_NAME,
+                        ),
                         global_step=self._step,
                     )
                     print('checkpoint saved at {}'.format(save_path))
@@ -1075,7 +1072,12 @@ class Image2Text:
 
         self._tf_coordinator.join(queue_threads)
 
-        with open(os.path.join(CONFIG_DIR, run_name + '.json'), 'w') as fp:
+        self._config['global_step'] = self._step
+        config_file_path = os.path.join(
+            run_name,
+            'config.json',
+        )
+        with open(config_file_path, 'w') as fp:
             json.dump(self._config, fp)
 
         summary_writer.close()
@@ -1532,10 +1534,10 @@ class Image2Text:
 
         return rd
 
-def get_step_from_checkpoint(save_path):
-    return int(save_path.split('-')[-1])
-
-def parse_checkpoint_save_path(save_path):
-    filename = save_path.split('/')[-1]
-    run_name, steps_str = filename.split('-')
-    return (run_name, int(steps_str))
+#def get_step_from_checkpoint(save_path):
+#    return int(save_path.split('-')[-1])
+#
+#def parse_checkpoint_save_path(save_path):
+#    filename = save_path.split('/')[-1]
+#    run_name, steps_str = filename.split('-')
+#    return (run_name, int(steps_str))

@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+{% block head %}
+    <!-- Start of BokehJS -->
+    <link
+        href="https://cdn.pydata.org/bokeh/release/bokeh-0.12.6.min.css"
+        rel="stylesheet" type="text/css">
+    <script src="https://cdn.pydata.org/bokeh/release/bokeh-0.12.6.min.js"></script>
+    <!-- End of BokehJS -->
+
+    {{ bokeh_plot_script | safe }}
+{% endblock %}
+{% block body %}
+<div class="container">
+    <h2>Result</h2>
+    <br/>
+    <div class="col-md-3" style="width:300px; margin:10px;">
+        <h3>Input Image (scaled)</h3>
+        <img src="{{ url_for('input_image', image_id=image_id) }}">
+        <p>{{ caption }}</p>
+    </div>
+    <div class="col-md-9" style="width:600px; margin:10px;">
+        <h3>t-SNE Word Embedding</h3>
+        {{ bokeh_plot_div | safe }}
+    </div>
+</div>
+<br/>
+{% endblock %}

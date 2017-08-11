@@ -4,6 +4,7 @@ import sklearn
 from sklearn.manifold import TSNE
 from bokeh.plotting import figure, output_file, show
 from bokeh.models import HoverTool, ColumnDataSource, LabelSet, Label
+from bokeh.embed import components
 
 from dataset import Vocabulary
 
@@ -352,11 +353,23 @@ def load_tsne_of_word_embedding(
 
 def get_word_embedding_plot(
     sequence,
-    word_embedding_file_path,
-    vocabulary_file_path,
+    tsne_file_path,
+    vocabulary_file_path=None,
+    vocabulary=None,
+    notebook=False,
     plot_width=600,
     plot_height=600,
 ):
+    if vocabulary_file_path is not None:
+        vocabulary = Vocabulary(file_path=vocabulary_file_path)
+    elif vocabulary is None:
+        raise ValueError(
+            'Either vocabulary_file_path or vocabulary '
+            'should be provided.'
+        )
+    if tsne_file_path is None:
+        raise ValueError
+
     sequence = np.unique(sequence)
     hover = HoverTool(
         tooltips=[
@@ -368,16 +381,14 @@ def get_word_embedding_plot(
         plot_width=plot_width,
         plot_height=plot_height,
         title=(
-            't-SNE word embedding - '
-            'click on legend entries to hide the corresponding data.'
+            'Click on legend entries to hide the corresponding data.'
         ),
     )
     bokeh_figure.add_tools(hover)
 
     word_embedding = load_tsne_of_word_embedding(
-        word_embedding_file_path
+        tsne_file_path
     )
-    vocabulary = Vocabulary(file_path=vocabulary_file_path)
 
     sentence_words = [vocabulary.get_word_of_id(word_id)
                       for word_id in sequence]
@@ -431,4 +442,11 @@ def get_word_embedding_plot(
     bokeh_figure.legend.location = 'top_left'
     bokeh_figure.legend.click_policy = 'mute'
 
-    return bokeh_figure
+    if notebook:
+        return bokeh_figure
+    else:
+        script, div = components(bokeh_figure)
+        return {
+            'script': script,
+            'div': div,
+        }
