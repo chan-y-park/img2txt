@@ -7,21 +7,50 @@
     <script src="https://cdn.pydata.org/bokeh/release/bokeh-0.12.6.min.js"></script>
     <!-- End of BokehJS -->
 
+    <script src="http://code.jquery.com/jquery-latest.js"></script>
+    <script>
+        jQuery(document).ready(function(){
+            jQuery('#hideshow').on('click', function(event) {        
+                jQuery('#t-sne_word_embedding').toggle();
+            });
+        });
+    </script>
+
     {{ bokeh_plot_script | safe }}
 {% endblock %}
 {% block body %}
 <div class="container">
     <h2>Result</h2>
     <br/>
-    <div class="col-md-3" style="width:300px; margin:10px;">
-        <h3>Input Image (scaled)</h3>
-        <img src="{{ url_for('input_image', image_id=image_id) }}">
-        <p>{{ caption }}</p>
+    <div class=row>
+        <!-- <div class="col-md-3" style="width:300px; margin:10px;"> -->
+        <div class="col-md-6">
+            <h3>Input Image (center cropped and scaled)</h3>
+            <img src="{{ url_for('input_image', image_id=image_id) }}", width="100%">
+            <h3>{{ caption }}</h3>
+        </div>
     </div>
-    <div class="col-md-9" style="width:600px; margin:10px;">
-        <h3>t-SNE Word Embedding</h3>
-        {{ bokeh_plot_div | safe }}
+    <br/>
+    <div class=row>
+        <div class="col-md-3">
+            <input type='button' id='hideshow' value='Toggle t-SNE word embedding'>
+        </div>
     </div>
+    <div class=row>
+        <!-- <div class="col-md-9" style="width:600px; margin:10px;"> -->
+        <div class="col-md-9" id="t-sne_word_embedding">
+            <h3>t-SNE Word Embedding</h3>
+            {{ bokeh_plot_div | safe }}
+        </div>
+    </div>
+    <br/>
+    <div class=row>
+        <div class="col-md-3">
+            <a class="btn btn-default" href="{{ url_for('config') }}" role="button">Try another image!</a>
+            <!-- <a href="{{ url_for('config') }}">Try another image!</a> -->
+        </div>
+    </div>
+    <script>jQuery('#t-sne_word_embedding').hide();</script>
 </div>
 <br/>
 {% endblock %}
