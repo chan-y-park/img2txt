@@ -1300,6 +1300,16 @@ class Image2Text:
         )
         return rd['summary/eval/merged/merged']
 
+    def save_word_embedding(self, save_file_path='img2txt_word_embedding.npy'):
+        rvs = self._tf_session.run(
+            fetches=[
+                self._tf_graph.get_tensor_by_name('rnn/word_embedding:0')
+            ],
+            feed_dict={},
+        )
+        word_embedding = rvs[0]
+        np.save(save_file_path, word_embedding)
+
     def generate_sentence(self, input_image):
         cfg_convnet = self._config['convnet']
         preprocessed_image = preprocess_image(

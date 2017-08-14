@@ -75,6 +75,10 @@ def get_euclidean_distance(vector_1, vector_2):
     return np.linalg.norm(vector_1 - vector_2) 
 
 
+def load_word_embedding(file_path='img2txt_word_embedding.npy'):
+    return np.load(file_path)
+
+
 def get_word_embedding_plot_of_nearby_words(
     image_vector,
     sequence,
@@ -86,6 +90,14 @@ def get_word_embedding_plot_of_nearby_words(
     plot_width=600,
     plot_height=600,
 ):
+    """
+    For a given embedding, and an embedding vector of an image,
+    and a sequence of its caption sentence, 1) form a sentence vector
+    by summing over the word vectors of the sentence,
+    2) find nearby words of the image vector, sentence vector, and word vectors
+    in the sentence, and 3) show all the word vectors using t-SNE.
+    """
+    vocabulary = Vocabulary(file_path=vocabulary_file_path)
     if metric == 'cosine':
         tsne_metric=sklearn.metrics.pairwise.cosine_distances
         get_distance = get_cosine_distance
@@ -109,8 +121,6 @@ def get_word_embedding_plot_of_nearby_words(
         num_nearby_words,
         metric=metric,
     )
-#    words = [vocabulary.get_word_of_id(word_id) for word_id in word_ids]
-#    sentence = vocabulary.get_sentence_from_word_ids(sequence) 
 
     # NOTE: concatenated_vectors = [
     #   image_vector,
@@ -121,8 +131,6 @@ def get_word_embedding_plot_of_nearby_words(
     concatenated_vectors = np.concatenate(
         (vectors, nearby_word_vectors.reshape((-1, embedding_size))),
     )
-#    pca = sklearn.decomposition.PCA(n_components=50)
-#    concatenated_vectors = pca.fit_transform(concatenated_vectors)
     tsne = TSNE(metric=tsne_metric)
     transformed_vectors = tsne.fit_transform(concatenated_vectors)
     image_vector_distance = get_distance(
@@ -141,29 +149,9 @@ def get_word_embedding_plot_of_nearby_words(
         plot_width=plot_width,
         plot_height=plot_height,
         title='Word Embedding',
-#        x_range=,
-#        y_range=,
     )
     bokeh_figure.add_tools(hover)
 
-#    bokeh_figure.grid.grid_line_color = None
-#    bokeh_figure.xaxis.major_tick_line_color = None
-#    bokeh_figure.xaxis.minor_tick_line_color = None
-#    bokeh_figure.yaxis.major_tick_line_color = None
-#    bokeh_figure.yaxis.minor_tick_line_color = None
-#    bokeh_figure.xaxis.major_label_text_font_size = '0pt'
-#    bokeh_figure.yaxis.major_label_text_font_size = '0pt'
-
-#    source = ColumnDataSource(
-#        data={
-#            'x': vectors[:, 0],
-#            'y': vectors[:, 1],
-#            'color': ['red', 'black'] + ['blue'] * num_word_vectors,
-#            'text': ['IMAGE', sentence] + words,
-#            'distance': [image_vector_distance, 0] + list(distances),
-#            'alpha': [1.0, 1.0] + [0.5] * num_word_vectors,
-#        }
-#    )
     num_source_vectors = 2 + len(sequence)
     tsne_image_vector = transformed_vectors[0]
     tsne_sentence_vector = transformed_vectors[1]
@@ -240,6 +228,12 @@ def get_word_embedding_plot_of_sentence(
     plot_width=600,
     plot_height=600,
 ):
+    """
+    For a given embedding and a sequence of a sentence,
+    1) form a sentence vector by summing over the word vectors of the sentence,
+    2) find nearby words of the sentence vector, and
+    3) show the sentence vector & nearby word vectors using t-SNE.
+    """
     vocabulary = Vocabulary(file_path=vocabulary_file_path)
     if metric == 'cosine':
         tsne_metric=sklearn.metrics.pairwise.cosine_distances
@@ -329,14 +323,19 @@ def get_word_embedding_plot_of_sentence(
 def get_tsne_of_word_embedding(
     word_embedding,
     save_file_path=None,
-    tsne_init='pca',
-    tsne_metric='cosine',
-    tsne_verbosity=2,
+#    tsne_init='pca',
+#    tsne_metric='cosine',
+#    tsne_verbosity=2,
+    **tsne_kwargs
 ):
+    """
+    For a given word embedding, return (and save) t-SNE vectors.
+    """
     tsne = TSNE(
-        init=tsne_init,
-        metric=tsne_metric,
-        verbose=tsne_verbosity,
+#        init=tsne_init,
+#        metric=tsne_metric,
+#        verbose=tsne_verbosity,
+        **tsne_kwargs
     )
     tsne_word_vectors = tsne.fit_transform(word_embedding)
     if save_file_path is not None:
@@ -360,6 +359,9 @@ def get_word_embedding_plot(
     plot_width=600,
     plot_height=600,
 ):
+    """
+    Plot
+    """
     if vocabulary_file_path is not None:
         vocabulary = Vocabulary(file_path=vocabulary_file_path)
     elif vocabulary is None:
