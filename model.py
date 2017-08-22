@@ -18,7 +18,7 @@ from dataset import Vocabulary
 
 DEFAULT_LOG_DIR = 'logs'
 SAVE_NAME = 'img2txt'
-NUM_SIMILAR_WORDS = 40
+
 
 inception_v3_config = {
     'name': 'inception_v3',
@@ -26,17 +26,22 @@ inception_v3_config = {
     'pretrained_model_file_path': 'pretrained/inception_v3.ckpt',
     'input_image_shape': [299, 299, 3],
 }
+
+
 inception_v4_config = {
     'name': 'inception_v4',
     'train_dataset': 'imagenet',
     'pretrained_model_file_path': 'pretrained/inception_v4.ckpt',
 }
+
+
 vgg16_config = {
     'name': 'vgg16',
     'train_dataset': 'imagenet',
     'pretrained_model_file_path': 'pretrained/vgg16_weights.h5',
     'input_image_shape': [224, 224, 3],
 }
+
 
 default_config = {
     'minibatch_size': 32,
@@ -45,6 +50,8 @@ default_config = {
     'rnn_cell': {
         'type': 'lstm_block',
         'num_units': 512,
+        'forget_bias': 1.0,
+        'use_peepholes': False,
         'dropout_keep_probability': 0.7,
     },
     'variable_initializer': {

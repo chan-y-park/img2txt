@@ -43,7 +43,7 @@ class Img2TxtWebApp(flask.Flask):
             if not os.path.exists(directory):
                 os.makedirs(directory)
         self._img2txt_inference = Image2Text(
-            vocabulary_file_path='ms_coco_vocabulary.json',
+            vocabulary_file_path='inference/vocabulary.json',
             config_file_path='inference/config.json',
             checkpoint_save_path='inference/img2txt',
             inference_only=True,

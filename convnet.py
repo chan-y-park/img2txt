@@ -4,9 +4,9 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from PIL import Image
 
-from inception_v3 import inception_v3
-from inception_v4 import inception_v4
-from inception_utils import inception_arg_scope
+from inception.inception_v3 import inception_v3
+from inception.inception_v4 import inception_v4
+from inception.inception_utils import inception_arg_scope
 
 def build_inception(
     name,

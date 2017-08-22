@@ -28,5 +28,6 @@
     "input_queue_capacity": 1000,
     "training_dataset_name": "ms_coco_training",
     "validation_dataset_name": "ms_coco_validation",
-    "vocabulary_file_path": "ms_coco_vocabulary.json"
+    "vocabulary_file_path": "ms_coco_vocabulary.json",
+    "global_step": 0
 }

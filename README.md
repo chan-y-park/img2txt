@@ -5,8 +5,14 @@ End-to-end deep learning model to generate a summary of the content of an image 
 
 [Requirements](#requirements)
 
+[How to run ``img2txt``](#how-to-run-img2txt)
+
 
 ## Overview
+
+For a quick overview, please see [the slides for the 5-min demo of this project](https://docs.google.com/presentation/d/15HSGZaFE7pUj2iNZjHJtZn6TfuuKw8dXq3zad61jTfQ/edit?usp=sharing).
+
+### Acknowledgement
 
 The model architecture is based on
 
@@ -39,10 +45,26 @@ And its web UI requires the following libraries.
 * Bokeh (for word embedding visualization)
 
 ### Datasets
-``img2txt.dataset`` contains convenient wrappers for various public caption datasets including MS COCO, Flickr 8k/30k, and PASCAL.
+``img2txt.dataset`` contains convenient wrappers for various public caption datasets including MS COCO, Flickr 8k/30k, and PASCAL. Put each downloaded dataset in a separate directory, which will be used during the training of the model.
 
 ### Using pre-trained convnet models
 #### Inception (v3, v4)
 * Get checkpoints from https://github.com/tensorflow/models/tree/master/slim#Pretrained, and put the uncompressed checkpoint files in ``img2txt/pretrained``.
 #### VGG16
 * Copy Keras' pretrained model ``~/.keras/models/vgg16_weights_tf_dim_ordering_tf_kernels.h5`` to in ``img2txt/pretrained/vgg16_weights.h5``.
+
+## How to run ``img2txt``
+
+### Training
+Please see https://github.com/chan-y-park/img2txt/blob/master/img2txt_api_example.ipynb for a step-by-step guide.
+
+### Inference
+After training the model, put saved files in ``img2txt/inference``, more specifically
+* the checkpoint files as ``img2txt/inference/img2txt.*``, 
+* the configuration file as ``img2txt/inference/config.json``, and 
+* the vocabulary file as ``img2txt/inference/vocabulary.json``. 
+The run ``img2txt/web_app.wsgi``, open a web browser, and go to http://localhost:9999 to use the web UI for inference.
+![web_ui_screenshot](https://github.com/chan-y-park/img2txt/blob/master/web_ui_screenshot.png "web UI screenshot")
+
+## Performance
+When trained on MS COCO training dataset for 500k weight updates, where each update is a training on a minibatch of 32 image-caption pairs, the model gets 25.9 BLEU-4 score and 86.4 CIDEr score, which are evaluated using 4k random selections from MS COCO validation dataset and MS COCO Caption Evaluation API (https://github.com/tylin/coco-caption).
