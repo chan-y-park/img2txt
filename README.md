@@ -2,8 +2,8 @@
 End-to-end deep learning model to generate a summary of the content of an image in a sentence.
 
 [Overview](#overview)
+[Requirements](#requirements)
 
-[Acknowledgements](#acknowledgements)
 
 ## Overview
 
@@ -38,15 +38,10 @@ And its web UI requires the following libraries.
 * Bokeh (for word embedding visualization)
 
 ### Datasets
-#### MS COCO
-#### Flickr 8k/30k
-#### PASCAL
+``img2txt.dataset`` contains convenient wrappers for various public caption datasets including MS COCO, Flickr 8k/30k, and PASCAL.
 
-
-### Pre-trained models
+### Using pre-trained convnet models
 #### Inception (v3, v4)
 * Get checkpoints from https://github.com/tensorflow/models/tree/master/slim#Pretrained, and put the uncompressed checkpoint files in ``img2txt/pretrained``.
 #### VGG16
 * Copy Keras' pretrained model ``~/.keras/models/vgg16_weights_tf_dim_ordering_tf_kernels.h5`` to in ``img2txt/pretrained/vgg16_weights.h5``.
-
-## Acknowledgements
