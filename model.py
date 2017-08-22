@@ -18,8 +18,6 @@ from dataset import Vocabulary
 
 DEFAULT_LOG_DIR = 'logs'
 SAVE_NAME = 'img2txt'
-#DEFAULT_CHECKPOINT_DIR = 'checkpoints'
-#DEFAULT_CONFIG_DIR = 'configs'
 NUM_SIMILAR_WORDS = 40
 
 inception_v3_config = {
@@ -45,13 +43,8 @@ default_config = {
     'embedding_size': 512,
     'max_sequence_length': 20,
     'rnn_cell': {
-#        'type': 'lstm',
-#        'type': 'lstm_block',
-        'type': 'gru',
-#        'type': 'gru_block',
+        'type': 'lstm_block',
         'num_units': 512,
-#        'forget_bias': 1.0,
-#        'use_peepholes': False,
         'dropout_keep_probability': 0.7,
     },
     'variable_initializer': {
@@ -116,14 +109,6 @@ class Image2Text:
             self._config['minibatch_size'] = minibatch_size
         else:
             minibatch_size = self._config['minibatch_size']
-
-#        for directory in (
-#            LOG_DIR,
-#            CHECKPOINT_DIR,
-#            CONFIG_DIR,
-#        ):
-#            if not os.path.exists(directory):
-#                os.makedirs(directory)
 
         self._training_dataset = training_dataset
         self._validation_dataset = validation_dataset
@@ -257,7 +242,6 @@ class Image2Text:
         with_validation=True,
         minibatch_size=None,
     ):
-#        minibatch_size = self._config['minibatch_size']
         input_image_shape = self._config['convnet']['input_image_shape']
         embedding_size = self._config['embedding_size']
         vocabulary_size = self._vocabulary.get_size() 
@@ -470,9 +454,6 @@ class Image2Text:
                     )
                     scope.reuse_variables()
                 
-                # XXX: Where to place the following?
-#                scope.reuse_variables()
-
                 if with_training:
                     rnn_outputs, rnn_final_state = tf.nn.dynamic_rnn(
                         cell=dropout_rnn_cell,
@@ -648,37 +629,6 @@ class Image2Text:
                     dtype=tf.float32,
                     name='minibatch_loss',
                 )
-        
-#        if with_inference:
-#            with tf.variable_scope('embedding_similarity'):
-#                # Find similar words in the embedding space
-#                # in terms of cosine similarity.
-#                normed_word_embedding = tf.nn.l2_normalize(
-#                    word_embedding,
-#                    dim=1,
-#                    name='normed_word_embedding',
-#                )
-#                normed_image_embeddings = tf.nn.l2_normalize(
-#                    inference_image_embeddings,
-#                    dim=1,
-#                    name='normed_image_embeddings',
-#                )
-#                cosine_similarities = tf.matmul(
-#                    normed_image_embeddings,
-#                    word_embedding,
-#                    transpose_b=True,
-#                    name='cosine_similarities',
-#                )
-#                top_cosine_similarities, top_similar_word_ids = tf.nn.top_k(
-#                    cosine_similarities,
-#                    k=NUM_SIMILAR_WORDS,
-#                    name='top_cosine_similarities',
-#                )
-#                normed_top_word_vectors = tf.gather(
-#                    normed_word_embedding,
-#                    top_similar_word_ids,
-#                    name='normed_top_word_vectors',
-#                )
 
     def _build_convnet(self, input_images, reuse=None, scope=None):
         minibatch_size = self._config['minibatch_size']
@@ -769,8 +719,6 @@ class Image2Text:
         return (image_array, caption_sequence, mask)
 
     def _input_queue_enqueue_thread(self, thread_id):
-        # TODO: Change to logging.
-        # print('Starting input queue enqueue thread #{}...'.format(thread_id))
         dataset = self._training_dataset
 
         while not self._tf_coordinator.should_stop():
@@ -814,8 +762,6 @@ class Image2Text:
                 )
             except tf.errors.CancelledError:
                 pass
-                # TODO: Change to logging.
-                # print('Input queue closed.')
 
     def _build_summary_ops(self):
         with tf.variable_scope('train'):
@@ -833,20 +779,11 @@ class Image2Text:
                     )
                 ),
                 tf.summary.scalar(
-#                    name='input_queue_size',
                     name='queue_size',
                     tensor=self._tf_graph.get_tensor_by_name(
                         'input_queue/size:0'
                     ),
                 ),
-#                tf.summary.scalar(
-#                    name='data_queue_size',
-#                    tensor=tf.placeholder(
-#                        dtype=tf.float32,
-#                        shape=[],
-#                        name='data_queue_size',
-#                    )
-#                )
             ]
             train_summary_op = tf.summary.merge(
                 train_summaries,
@@ -1117,21 +1054,12 @@ class Image2Text:
                 self._tf_graph.get_tensor_by_name(
                     'image_embedding/inference_image_embeddings:0'
                 ),
-#            'embedding_similarity/normed_top_word_ids':
-#                self._tf_graph.get_tensor_by_name(
-#                    'embedding_similarity/top_cosine_similarities:1'
-#                ),
-#            'embedding_similarity/normed_top_word_vectors':
-#                self._tf_graph.get_tensor_by_name(
-#                    'embedding_similarity/normed_top_word_vectors:0'
-#                ),
         }
         rd_init = self._tf_session.run(
             fetches=fetch_dict,
             feed_dict=feed_dict,
         )
 
-#        convnet_predictions = rd['convnet/inference_predictions']
         prev_rnn_states = rd_init['rnn/inference_initial_states']
 
         inputs = np.array(
@@ -1194,15 +1122,12 @@ class Image2Text:
                     )
                     minibatch_loss += loss
         rd = {
-#            'convnet_predictions': convnet_predictions,
             'output_sequences': output_seqs,
             'minibatch_loss': minibatch_loss,
         }
         for var_name in [
             'rnn/word_embedding',
             'image_embedding/inference_image_embeddings',
-#            'embedding_similarity/normed_top_word_ids',
-#            'embedding_similarity/normed_top_word_vectors',
             'convnet/inference_predictions',
         ]:
             rd[var_name] = rd_init[var_name]
@@ -1543,11 +1468,3 @@ class Image2Text:
             step += 1
 
         return rd
-
-#def get_step_from_checkpoint(save_path):
-#    return int(save_path.split('-')[-1])
-#
-#def parse_checkpoint_save_path(save_path):
-#    filename = save_path.split('/')[-1]
-#    run_name, steps_str = filename.split('-')
-#    return (run_name, int(steps_str))

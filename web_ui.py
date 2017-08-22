@@ -70,7 +70,6 @@ class Img2TxtWebApp(flask.Flask):
         )
 
         vocabulary = self._img2txt_inference._vocabulary 
-#        image_vector = rd['image_embedding/inference_image_embeddings'][0]
         word_embedding = rd['rnn/word_embedding']
         sequence = rd['output_sequences'][0]
         post_seq = vocabulary.get_postprocessed_sequence(sequence)
@@ -164,7 +163,6 @@ def show_results():
         'result.html',
         **rd_inference,
     )
-
 
 
 def get_web_app(

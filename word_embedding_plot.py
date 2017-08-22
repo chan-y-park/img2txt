@@ -323,18 +323,12 @@ def get_word_embedding_plot_of_sentence(
 def get_tsne_of_word_embedding(
     word_embedding,
     save_file_path=None,
-#    tsne_init='pca',
-#    tsne_metric='cosine',
-#    tsne_verbosity=2,
     **tsne_kwargs
 ):
     """
     For a given word embedding, return (and save) t-SNE vectors.
     """
     tsne = TSNE(
-#        init=tsne_init,
-#        metric=tsne_metric,
-#        verbose=tsne_verbosity,
         **tsne_kwargs
     )
     tsne_word_vectors = tsne.fit_transform(word_embedding)
