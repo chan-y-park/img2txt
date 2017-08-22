@@ -2,6 +2,7 @@
 End-to-end deep learning model to generate a summary of the content of an image in a sentence.
 
 [Overview](#overview)
+
 [Requirements](#requirements)
 
 
