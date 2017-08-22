@@ -1,5 +1,5 @@
 # ``img2txt``
-Generate a text description of an image using deep neural networks.
+End-to-end deep learning model to generate a summary of the content of an image in a sentence.
 
 [Overview](#overview)
 
@@ -15,7 +15,11 @@ Challenge."
 > *IEEE transactions on pattern analysis and machine intelligence (2016).*
 > http://arxiv.org/abs/1609.06647
 
-but the code is written from scratch using TensorFlow APIs.
+and the following code in the TensorFlow model zoo is frequently used as a reference,
+
+https://github.com/tensorflow/models/tree/master/im2txt
+
+but the code is written from scratch using TensorFlow APIs, except Inception models whose codes are obtained in the current master version (325609e) of https://github.com/tensorflow/models/tree/master/slim.
 
 
 ## Requirements
@@ -28,7 +32,10 @@ but the code is written from scratch using TensorFlow APIs.
 * TensorFlow 1.2
 * Pillow
 * NLTK (NLTK data needed for tokenization; only ``nltk_data/tokenizers/punkt/PY3/english.pickle`` needed.)
-* Flask (for web UI)
+
+And its web UI requires the following libraries.
+* Flask
+* Bokeh (for word embedding visualization)
 
 ### Datasets
 #### MS COCO
