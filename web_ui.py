@@ -22,11 +22,11 @@ UPLOADED_IMAGES_DIR = 'uploaded_images'
 INPUT_IMAGES_DIR = 'input_images'
 
 
-def allowed_file(filename):
-    if '.' in filename:
-        if filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENTIONS:
-            return True
-    return False
+#def allowed_file(filename):
+#    if '.' in filename:
+#        if filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENTIONS:
+#            return True
+#    return False
 
 
 def get_image_path(directory, image_id, ext='jpg'):
@@ -118,11 +118,21 @@ def config():
 
             image_file = flask.request.files['image_file']
             if image_file.filename == '':
-                print('No selected file')
-                return flask.redirect(flask.request.url)
+                return flask.render_template(
+                    'config.html',
+                    error_message='No selected file.',
+                )
 
-            if image_file and allowed_file(image_file.filename):
-                image_file.save(image_file_path)
+            if image_file:
+                try:
+                    pil_image = Image.open(image_file)
+                    pil_image.save(image_file_path)
+                except IOError:
+                    error_message='The image cannot be opened and identified.'
+                    return flask.render_template(
+                        'config.html',
+                        error_message=error_message,
+                    )
 
         return flask.render_template(
             'config.html',
