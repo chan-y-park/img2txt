@@ -17,16 +17,8 @@ from word_embedding_plot import get_word_embedding_plot
 # TODO: display a message to the user browser.
 message = print
 
-ALLOWED_EXTENTIONS = ['jpg', 'jpeg']
 UPLOADED_IMAGES_DIR = 'uploaded_images'
 INPUT_IMAGES_DIR = 'input_images'
-
-
-#def allowed_file(filename):
-#    if '.' in filename:
-#        if filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENTIONS:
-#            return True
-#    return False
 
 
 def get_image_path(directory, image_id, ext='jpg'):
