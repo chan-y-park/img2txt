@@ -83,6 +83,7 @@ class Image2Text:
         validation_dataset=None,
         vocabulary_file_path=None,
         inference_only=False,
+        train_convnet=False,
         minibatch_size=None,
         config_file_path=None,
         checkpoint_save_path=None,
@@ -111,6 +112,13 @@ class Image2Text:
             self._vocabulary = Vocabulary(
                 file_path=vocabulary_file_path
             )
+
+        if train_convnet is not None:
+            self._config['train_convnet'] = train_convnet
+        elif 'train_convnet' in self._config:
+            train_convnet = self._config['train_convnet']
+        else:
+            train_convnet = False
 
         if minibatch_size is not None:
             self._config['minibatch_size'] = minibatch_size
@@ -158,6 +166,7 @@ class Image2Text:
                     with_training=True,
                     with_inference=True,
                     with_validation=True,
+                    train_convnet=train_convnet,
                     minibatch_size=minibatch_size,
                 )
 
@@ -247,6 +256,7 @@ class Image2Text:
         with_training=True,
         with_inference=True,
         with_validation=True,
+        train_convnet=False,
         minibatch_size=None,
     ):
         input_image_shape = self._config['convnet']['input_image_shape']
@@ -312,6 +322,7 @@ class Image2Text:
                 convnet_features, predictions = self._build_convnet(
                     images,
                     scope=scope,
+                    train_convnet=train_convnet,
                 )
                 tf.identity(
                     predictions,
@@ -588,7 +599,10 @@ class Image2Text:
                 )
                 train_var_list = []
                 for var in self._tf_graph.get_collection('trainable_variables'):
-                    if 'convnet' not in var.name:
+                    if (
+                        train_convnet
+                        or ('convnet' not in var.name)
+                    ):
                         train_var_list.append(var)
                 grads_and_vars = optimizer.compute_gradients(
                     var_list=train_var_list,
@@ -637,7 +651,13 @@ class Image2Text:
                     name='minibatch_loss',
                 )
 
-    def _build_convnet(self, input_images, reuse=None, scope=None):
+    def _build_convnet(
+        self,
+        input_images,
+        reuse=None,
+        scope=None,
+        train_convnet=False,
+    ):
         minibatch_size = self._config['minibatch_size']
         embedding_size = self._config['embedding_size']
         convnet_cfg = self._config['convnet']
@@ -667,6 +687,7 @@ class Image2Text:
                 pretrained_model_file_path=pretrained_model_file_path,
                 reuse=reuse,
                 scope=scope,
+                is_training=train_convnet,
             )
             convnet_features = tf.squeeze(
                 endpoints['PreLogits'],
@@ -1016,7 +1037,7 @@ class Image2Text:
 
         self._tf_coordinator.join(queue_threads)
 
-        self._config['global_step'] = self._step
+        self._config['global_step'] = self._step - 1
         config_file_path = os.path.join(
             run_name,
             'config.json',
