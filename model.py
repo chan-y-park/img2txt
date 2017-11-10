@@ -63,6 +63,7 @@ default_config = {
         'learning_rate_decay_rate': 0.5,
         'num_epochs_per_decay': 8.0,
         'gradient_clip_norm': 5.0,
+        'inception_learning_rate': 0.0005,
     },
     'convnet': inception_v3_config,
     'beam_size': 3,
@@ -118,7 +119,7 @@ class Image2Text:
         elif 'train_convnet' in self._config:
             train_convnet = self._config['train_convnet']
         else:
-            train_convnet = False
+            train_convnet = self._config['train_convnet'] = False
 
         if minibatch_size is not None:
             self._config['minibatch_size'] = minibatch_size
@@ -951,13 +952,23 @@ class Image2Text:
         ]:
             fetch_dict[op_name] = self._tf_graph.get_operation_by_name(op_name)
 
+        if (
+            self._config['train_convnet']
+            and 'inception' in self._config['convnet']['name']
+        ):
+            constant_learning_rate = (
+                self._config['optimizer']['inception_learning_rate']
+            )
+        else:
+            constant_learning_rate = None
+
         try:
             step = 0
             while self._step <= max_num_steps:
-                if self._tf_coordinator.should_stop():
-                    break
-
-                learning_rate = self._get_decayed_learning_rate(self._step)
+                if constant_learning_rate is not None:
+                    learning_rate = constant_learning_rate
+                else:
+                    learning_rate = self._get_decayed_learning_rate(self._step)
 
                 feed_dict = {
                     self._tf_graph.get_tensor_by_name(
