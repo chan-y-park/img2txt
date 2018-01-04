@@ -17,6 +17,7 @@ def build_inception(
     pretrained_model_file_path=None,
     reuse=False,
     scope=None,
+    is_training=False,
 ):
     if name == 'inception_v3':
         build_fn = inception_v3
@@ -26,7 +27,7 @@ def build_inception(
         logits, endpoints = build_fn(
             input_layer,
             create_aux_logits=False,
-            is_training=False,
+            is_training=is_training,
             reuse=reuse,
         )
     if not reuse:
