@@ -12,8 +12,7 @@ from tensorflow.contrib.keras.python.keras.applications.imagenet_utils import (
     decode_predictions
 )
 
-from convnet import build_vgg16, build_inception, preprocess_image
-from dataset import Vocabulary
+from .convnet import build_vgg16, build_inception, preprocess_image
 
 
 DEFAULT_LOG_DIR = 'logs'
@@ -23,7 +22,6 @@ SAVE_NAME = 'img2txt'
 inception_v3_config = {
     'name': 'inception_v3',
     'train_dataset': 'imagenet',
-    'pretrained_model_file_path': 'pretrained/inception_v3.ckpt',
     'input_image_shape': [299, 299, 3],
 }
 
@@ -31,14 +29,13 @@ inception_v3_config = {
 inception_v4_config = {
     'name': 'inception_v4',
     'train_dataset': 'imagenet',
-    'pretrained_model_file_path': 'pretrained/inception_v4.ckpt',
+    'input_image_shape': [299, 299, 3],
 }
 
 
 vgg16_config = {
     'name': 'vgg16',
     'train_dataset': 'imagenet',
-    'pretrained_model_file_path': 'pretrained/vgg16_weights.h5',
     'input_image_shape': [224, 224, 3],
 }
 
@@ -77,12 +74,26 @@ default_config = {
 }
 
 
+# TODO:
+# 1. Modularization
+# 1.1 Separate tf.Session from Image2Text, leave only tf.Graph.
+# 1.2 Separate train, inference, etc, from Image2Text and make them
+#     as API calls from separate files, the current code length is too long
+#     for a single file.
+# 2. Remove '-1' from tensor shapes, which makes worse readability, as much
+#    as possible. Anyway a TF graph is static.
+# 3. Consider having separate graphs for training and inference. 
+#    Although they share many weights, currently the code readability is 
+#    quite bad because there is a single graph with many if-clauses.
+#    But currently there is an inference step for every training step
+#    to evaluate validation loss, which makes the separation complicated.
 class Image2Text:
     def __init__(
         self,
         training_dataset=None,
         validation_dataset=None,
-        vocabulary_file_path=None,
+        #vocabulary_file_path=None,
+        vocabulary=None,
         inference_only=False,
         train_convnet=False,
         minibatch_size=None,
@@ -106,13 +117,17 @@ class Image2Text:
         if validation_dataset is not None:
             self._config['validation_dataset_name'] = validation_dataset.name
 
-        if vocabulary_file_path is None:
-            raise ValueError('vocabulary_file_path must be provided.')
+#        if vocabulary_file_path is None:
+#            raise ValueError('vocabulary_file_path must be provided.')
+#        else:
+#            self._config['vocabulary_file_path'] = vocabulary_file_path
+#            self._vocabulary = Vocabulary(
+#                file_path=vocabulary_file_path
+#            )
+        if vocabulary is None:
+            raise ValueError('vocabulary must be provided.')
         else:
-            self._config['vocabulary_file_path'] = vocabulary_file_path
-            self._vocabulary = Vocabulary(
-                file_path=vocabulary_file_path
-            )
+            self._vocabulary = vocabulary        
 
         if train_convnet is not None:
             self._config['train_convnet'] = train_convnet
@@ -312,6 +327,8 @@ class Image2Text:
                 shape=([minibatch_size] + input_image_shape),
                 name='inference_input_images',
             )
+            # The shape of inference_inputs is 2-dim
+            # to make it the same as training inputs.
             inference_inputs = tf.placeholder(
                 dtype=tf.int32,
                 shape=[minibatch_size, 1],
@@ -462,6 +479,7 @@ class Image2Text:
                         rnn_zero_states,
                     )
                     scope.reuse_variables()
+
                 if with_inference:
                     inference_rnn_zero_states = rnn_cell.zero_state(
                         batch_size=minibatch_size,
@@ -534,7 +552,7 @@ class Image2Text:
                     )
                     word_logits, word_ids = tf.nn.top_k(
                         word_log_probabilities,
-                        k=self._config['beam_size'],
+                        k=1,
                     )
 
                 if with_inference:
@@ -544,7 +562,7 @@ class Image2Text:
                         name='inference_word_log_probabilities',
                     )
                     inference_word_probabilities = tf.nn.softmax(
-                        inference_word_log_probabilities,
+                        logits=inference_word_log_probabilities,
                         name='inference_word_probabilities',
                     )
                     inference_word_logits, inference_word_ids = tf.nn.top_k(
@@ -663,14 +681,12 @@ class Image2Text:
         embedding_size = self._config['embedding_size']
         convnet_cfg = self._config['convnet']
         name = convnet_cfg['name']
-        pretrained_model_file_path = convnet_cfg['pretrained_model_file_path']
 
         if name == 'vgg16':
             with tf.variable_scope('vgg16'):
                 build_vgg16(
                     input_images,
                     minibatch_size,
-                    pretrained_model_file_path=pretrained_model_file_path,
                 )
                 convnet_features = self._tf_graph.get_tensor_by_name(
                     'convnet/vgg16/top/fc2/activation:0',
@@ -685,7 +701,6 @@ class Image2Text:
                 minibatch_size,
                 tf_session=self._tf_session,
                 tf_graph=self._tf_graph,
-                pretrained_model_file_path=pretrained_model_file_path,
                 reuse=reuse,
                 scope=scope,
                 is_training=train_convnet,
@@ -933,7 +948,6 @@ class Image2Text:
             'train/minibatch_loss',
             'image_embedding/image_embeddings',
             'convnet/training_predictions',
-            'output_seqs',
             'summary/train/merged/merged',
         ]:
             fetch_dict[var_name] = self._tf_graph.get_tensor_by_name(
@@ -1060,12 +1074,16 @@ class Image2Text:
 
         return rd
 
+    # TODO: Merge get_inference() into evaluate_validation()?
     def get_inference(
         self,
         images_array,
         targets=None,
         masks=None,
     ):
+        """
+            Inference for validation during training.
+        """
         minibatch_size = self._config['minibatch_size']
         max_sequence_length = self._config['max_sequence_length']
 
@@ -1109,6 +1127,7 @@ class Image2Text:
             dtype=np.int32,
         )
         minibatch_loss = 0
+
         # For max_sequence_length, feed input seqs
         # and fetch word probabilities & new RNN states.
         for t in range(max_sequence_length):
@@ -1147,7 +1166,6 @@ class Image2Text:
                 feed_dict=feed_dict,
             )
             prev_rnn_states = rd['rnn/inference_new_states']
-            # TODO: Need to change when using beam search.
             inputs = rd['rnn/fc/inference_word_ids'][:, 0:1]
             output_seqs[:, t] = rd['rnn/fc/inference_word_ids'][:, 0]
             if targets is not None:
@@ -1263,6 +1281,102 @@ class Image2Text:
             feed_dict=feed_dict,
         )
         return rd['summary/eval/merged/merged']
+
+    def get_inference_using_beam_search(
+        self,
+        images_array,
+    ):
+        beam_size = self._config['beam_size']
+        max_sequence_length = self._config['max_sequence_length']
+
+        # Feed images, fetch RNN initial states.
+        feed_dict = {
+            self._tf_graph.get_tensor_by_name(
+                'inference_input_images:0'
+            ): images_array,
+        }
+        fetch_dict = {
+            'rnn/inference_initial_states':
+                self._tf_graph.get_tensor_by_name(
+                    'rnn/inference_initial_states:0'
+                ),
+            'convnet/inference_predictions':
+                self._tf_graph.get_tensor_by_name(
+                    'convnet/inference_predictions:0'
+                ),
+            # TODO: Check the latency of fetching the following tensor.
+            'rnn/word_embedding':
+                self._tf_graph.get_tensor_by_name(
+                    'rnn/word_embedding:0'
+                ),
+            'image_embedding/inference_image_embeddings':
+                self._tf_graph.get_tensor_by_name(
+                    'image_embedding/inference_image_embeddings:0'
+                ),
+        }
+        rd_init = self._tf_session.run(
+            fetches=fetch_dict,
+            feed_dict=feed_dict,
+        )
+
+        prev_rnn_states = rd_init['rnn/inference_initial_states']
+
+        inputs = np.array(
+            [[self._vocabulary.start_word_id] for i in range(minibatch_size)]
+        )
+        output_seqs = np.zeros(
+            shape=(minibatch_size, max_sequence_length),
+            dtype=np.int32,
+        )
+        minibatch_loss = 0
+
+        # TODO
+        # Prepare min heaps for partial and complete sequences.
+        # When doing beam search, (beam size) = (minibatch size).
+
+        # For max_sequence_length, feed input seqs
+        # and fetch word probabilities & new RNN states.
+        for t in range(max_sequence_length):
+            feed_dict = {
+                self._tf_graph.get_tensor_by_name(
+                    'inference_inputs:0'
+                ): inputs,
+                self._tf_graph.get_tensor_by_name(
+                    'rnn/inference_prev_states:0'
+                ): prev_rnn_states,
+            }
+            fetch_dict = {
+                'rnn/inference_new_states': self._tf_graph.get_tensor_by_name(
+                    'rnn/inference_new_states:0'
+                ),
+                'rnn/fc/inference_word_logits': (
+                    self._tf_graph.get_tensor_by_name(
+                        'rnn/fc/inference_predictions:0'
+                    )
+                ),
+                'rnn/fc/inference_word_ids': self._tf_graph.get_tensor_by_name(
+                    'rnn/fc/inference_predictions:1'
+                ),
+            }
+            rd = self._tf_session.run(
+                fetches=fetch_dict,
+                feed_dict=feed_dict,
+            )
+            prev_rnn_states = rd['rnn/inference_new_states']
+            # TODO: Need to change when using beam search.
+            inputs = rd['rnn/fc/inference_word_ids'][:, 0:1]
+            output_seqs[:, t] = rd['rnn/fc/inference_word_ids'][:, 0]
+            
+        rd = {
+            'output_sequences': output_seqs,
+        }
+        for var_name in [
+            'rnn/word_embedding',
+            'image_embedding/inference_image_embeddings',
+            'convnet/inference_predictions',
+        ]:
+            rd[var_name] = rd_init[var_name]
+        return rd
 
     def save_word_embedding(self, save_file_path='img2txt_word_embedding.npy'):
         rvs = self._tf_session.run(

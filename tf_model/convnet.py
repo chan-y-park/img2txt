@@ -1,12 +1,17 @@
+import os
+
 import h5py
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from PIL import Image
 
-from inception.inception_v3 import inception_v3
-from inception.inception_v4 import inception_v4
-from inception.inception_utils import inception_arg_scope
+from .inception.inception_v3 import inception_v3
+from .inception.inception_v4 import inception_v4
+from .inception.inception_utils import inception_arg_scope
+
+current_dir = os.path.dirname(os.path.realpath(__file__))
+
 
 def build_inception(
     name,
@@ -14,7 +19,6 @@ def build_inception(
     minibatch_size,
     tf_session,
     tf_graph,
-    pretrained_model_file_path=None,
     reuse=False,
     scope=None,
     is_training=False,
@@ -23,6 +27,14 @@ def build_inception(
         build_fn = inception_v3
     elif name == 'inception_v4':
         build_fn = inception_v4
+    else:
+        raise ValueError
+
+    pretrained_model_file_path = os.path.join(
+        current_dir,
+        'pretrained/{}.ckpt'.format(name),
+    )
+
     with slim.arg_scope(inception_arg_scope()):
         logits, endpoints = build_fn(
             input_layer,
@@ -51,8 +63,11 @@ def build_inception(
 def build_vgg16(
     input_layer,
     minibatch_size,
-    pretrained_model_file_path='pretrained/vgg16_weights.h5'
 ):
+    pretrained_model_file_path = os.path.join(
+        current_dir,
+        'pretrained/vgg16_weights.h5',
+    )
     network_config = [
         ('block1',
             (
