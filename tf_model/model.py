@@ -8,7 +8,7 @@ import queue
 import numpy as np
 import tensorflow as tf
 
-from tensorflow.contrib.keras.python.keras.applications.imagenet_utils import (
+from tensorflow.python.keras._impl.keras.applications.imagenet_utils import (
     decode_predictions
 )
 
