@@ -1,5 +1,7 @@
-def _build_network(
-    self,
+import tensorflow as tf
+
+def build_network(
+    model,
     use_input_queue=True,
     with_training=True,
     with_inference=True,
@@ -7,9 +9,9 @@ def _build_network(
     train_convnet=False,
     minibatch_size=None,
 ):
-    input_image_shape = self._config['convnet']['input_image_shape']
-    embedding_size = self._config['embedding_size']
-    vocabulary_size = self._vocabulary.get_size() 
+    input_image_shape = model._config['convnet']['input_image_shape']
+    embedding_size = model._config['embedding_size']
+    vocabulary_size = model._vocabulary.get_size() 
 
     if not with_training and not with_inference:
         raise ValueError(
@@ -25,12 +27,12 @@ def _build_network(
             # NOTE: When using PaddedFIFOQueue, all captions are padded
             # to the same maximum sequence length.
             images, input_seqs, target_seqs, masks = [
-                self._tf_graph.get_tensor_by_name(
+                model._tf_graph.get_tensor_by_name(
                     'input_queue/dequeued_inputs:{}'.format(i),
                 ) for i in range(4)
             ]
         else:
-            max_sequence_length = self._config['max_sequence_length']
+            max_sequence_length = model._config['max_sequence_length']
             
             images = tf.placeholder(
                 dtype=tf.float32,
@@ -69,7 +71,7 @@ def _build_network(
 
     with tf.variable_scope('convnet') as scope:
         if with_training:
-            convnet_features, predictions = self._build_convnet(
+            convnet_features, predictions = model._build_convnet(
                 images,
                 scope=scope,
                 train_convnet=train_convnet,
@@ -85,7 +87,7 @@ def _build_network(
 
         if with_inference:
             (inference_convnet_features,
-             inference_predictions) = self._build_convnet(
+             inference_predictions) = model._build_convnet(
                 inference_input_images,
                 reuse=reuse_convnet,
                 scope=scope,
@@ -105,12 +107,12 @@ def _build_network(
         W = tf.get_variable(
             name='W',
             shape=(convnet_output_size, embedding_size),
-            initializer=self._get_variable_initializer(),
+            initializer=model._get_variable_initializer(),
         )
         b = tf.get_variable(
             name='b',
             shape=(embedding_size),
-            initializer=self._get_variable_initializer(),
+            initializer=model._get_variable_initializer(),
         )
         if with_training:
             image_embeddings = tf.add(
@@ -126,13 +128,13 @@ def _build_network(
             )
         
     with tf.variable_scope('rnn'):
-        cfg_rnn_cell = self._config['rnn_cell']
+        cfg_rnn_cell = model._config['rnn_cell']
         rnn_output_size = cfg_rnn_cell['num_units']
 
         word_embedding = tf.get_variable(
             name='word_embedding',
             shape=[vocabulary_size, embedding_size],
-            initializer=self._get_variable_initializer(),
+            initializer=model._get_variable_initializer(),
         )
         if with_training:
             input_embeddings = tf.nn.embedding_lookup(
@@ -268,12 +270,12 @@ def _build_network(
             W = tf.get_variable(
                 name='W',
                 shape=(rnn_output_size, vocabulary_size),
-                initializer=self._get_variable_initializer(),
+                initializer=model._get_variable_initializer(),
             )
             b = tf.get_variable(
                 name='b',
                 shape=(vocabulary_size),
-                initializer=self._get_variable_initializer(),
+                initializer=model._get_variable_initializer(),
             )
 
             if with_training:
@@ -299,7 +301,7 @@ def _build_network(
                 )
                 inference_word_logits, inference_word_ids = tf.nn.top_k(
                     inference_word_log_probabilities,
-                    k=beam_size,
+                    k=model._config['beam_size'],
                     name='inference_predictions',
                 )
         # End of fc scope.
@@ -349,7 +351,7 @@ def _build_network(
                 learning_rate=lr,
             )
             train_var_list = []
-            for var in self._tf_graph.get_collection('trainable_variables'):
+            for var in model._tf_graph.get_collection('trainable_variables'):
                 if (
                     train_convnet
                     or ('convnet' not in var.name)
@@ -362,7 +364,7 @@ def _build_network(
             gradients, variables = zip(*grads_and_vars)
             clipped_gradients, _ = tf.clip_by_global_norm(
                 gradients,
-                self._config['optimizer']['gradient_clip_norm'],
+                model._config['optimizer']['gradient_clip_norm'],
             )
             clipped_grads_and_vars = list(
                 zip(clipped_gradients, variables)
