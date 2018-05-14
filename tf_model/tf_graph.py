@@ -301,7 +301,7 @@ def build_network(
                 )
                 inference_word_logits, inference_word_ids = tf.nn.top_k(
                     inference_word_log_probabilities,
-                    k=model._config['beam_size'],
+                    k=model._beam_size,
                     name='inference_predictions',
                 )
         # End of fc scope.
